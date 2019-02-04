@@ -1,0 +1,8 @@
+contracts:
+  deploy: true
+  # path: "binaries/scalable_coin.bin"
+  path: "binaries/generic_coin.bin/Coin.bin"
+  address: "0000000000000000000000000000000000000000"
+
+benchmark:
+  clients: 1
