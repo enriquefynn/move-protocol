@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/hex"
 	"fmt"
+	"math/big"
 	"os"
 	"strconv"
 	"strings"
@@ -15,6 +16,8 @@ import (
 )
 
 const contractMappingName = "contractMapping.txt"
+
+var nilBytes []byte = nil
 
 type TxsRW struct {
 	path                string
@@ -32,8 +35,14 @@ func FatalError(err error) {
 
 func CreateTxsRW(path string) *TxsRW {
 	file, err := os.OpenFile(path, os.O_APPEND|os.O_RDWR, 0600)
+	if os.IsNotExist(err) {
+		file, err = os.Create(path)
+	}
 	FatalError(err)
 	contractMappingFile, err := os.OpenFile(contractMappingName, os.O_APPEND|os.O_RDWR, 0600)
+	if os.IsNotExist(err) {
+		contractMappingFile, err = os.Create(contractMappingName)
+	}
 	FatalError(err)
 
 	writer := bufio.NewWriter(file)
@@ -58,15 +67,17 @@ func (t *TxsRW) Close() {
 	t.contractMappingFile.Close()
 }
 
-func (t *TxsRW) SaveTx(from, to, data []byte, amount, gas, gasPrice, shouldFail uint64) {
+func (t *TxsRW) SaveTx(from, to, data []byte, amount, gas *big.Int, gasPrice, shouldFail uint64) {
 	fmt.Fprintf(t.readWriter, "%x %x %x %d %d %d %v\n", from, to, data, amount, gas, gasPrice, shouldFail)
+	t.readWriter.Flush()
 }
 
-func (t *TxsRW) SaveTxCreateContract(from, to, contractId []byte, amount, gas, gasPrice, shouldFail uint64) {
-	fmt.Fprintf(t.readWriter, "%x %x %x %d %d %d %v\n", from, nil, nil, amount, gas, gasPrice, shouldFail)
+func (t *TxsRW) SaveTxCreateContract(from, to, contractId []byte, amount, gas *big.Int, gasPrice, shouldFail uint64) {
+	fmt.Fprintf(t.readWriter, "%x %x %x %d %d %d %v\n", from, nilBytes, nilBytes, amount, gas, gasPrice, shouldFail)
 	// Create contract file:
 	_, err := os.Create("contracts/" + hex.EncodeToString(contractId) + ".txt")
 	fmt.Fprintf(t.contractMappingRW, "%x %x\n", to, contractId)
+	t.contractMappingRW.Flush()
 	FatalError(err)
 }
 

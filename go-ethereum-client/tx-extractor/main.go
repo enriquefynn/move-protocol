@@ -29,7 +29,7 @@ func tryCreateContract(simSender *lutils.SimulatedSender, txsRW *lutils.TxsRW, f
 	contractIDBytes := common.BigToAddress(big.NewInt(contractID)).Bytes()
 	if hasCode && shouldCreate {
 		logrus.Infof("Should deploy contract %x in tx: %x", to, tx.Hash())
-		txsRW.SaveTxCreateContract(from.Bytes(), to.Bytes(), contractIDBytes, tx.Value().Uint64(), tx.GasPrice().Uint64(), tx.Gas(), receiptStatus)
+		txsRW.SaveTxCreateContract(from.Bytes(), to.Bytes(), contractIDBytes, tx.Value(), tx.GasPrice(), tx.Gas(), receiptStatus)
 	}
 	return contractIDBytes
 }
@@ -80,7 +80,7 @@ func main() {
 			from, err := signer.Sender(tx)
 			lutils.FatalError(err)
 
-			txValue, txGasPrice, txGas, txData := tx.Value().Uint64(), tx.GasPrice().Uint64(), tx.Gas(), tx.Data()
+			txValue, txGasPrice, txGas, txData := tx.Value(), tx.GasPrice(), tx.Gas(), tx.Data()
 
 			for _, log := range receipt.Logs {
 				if reflect.DeepEqual(log.Address, contractAddr) && tx.To() != nil {
@@ -104,7 +104,8 @@ func main() {
 				logrus.Info("Creating main contract")
 				_, err := client.CodeAt(ctx, contractAddr, nil)
 				lutils.FatalError(err)
-				tryCreateContract(simulatedAccounts, txsFile, simulatedFrom.GetAddress(), contractAddr, tx, receipt.Status, true)
+				contractID := tryCreateContract(simulatedAccounts, txsFile, simulatedFrom.GetAddress(), contractAddr, tx, receipt.Status, true)
+				contractSimulatedAddr = common.BytesToAddress(contractID)
 				// transaction to the contract
 			} else if tx.To() != nil && reflect.DeepEqual(tx.To().Bytes(), contractAddr.Bytes()) {
 				simulatedFrom := simulatedAccounts.GetOrMake(from)
@@ -146,7 +147,7 @@ func main() {
 						}
 					}
 				}
-				txsFile.SaveTx(simulatedFrom.GetAddress().Bytes(), contractSimulatedAddr.Bytes(), txData, tx.Value().Uint64(), tx.GasPrice().Uint64(), tx.Gas(), receipt.Status)
+				txsFile.SaveTx(simulatedFrom.GetAddress().Bytes(), contractSimulatedAddr.Bytes(), txData, txValue, txGasPrice, txGas, receipt.Status)
 			}
 
 			// end of transaction
