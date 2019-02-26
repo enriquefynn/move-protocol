@@ -2,6 +2,7 @@ package utils
 
 import (
 	"bufio"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"strconv"
@@ -13,14 +14,14 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+const contractMappingName = "contractMapping.txt"
+
 type TxsRW struct {
-	path       string
-	file       *os.File
-	readWriter *bufio.ReadWriter
-}
-
-func (t *TxsRW) Open() {
-
+	path                string
+	file                *os.File
+	readWriter          *bufio.ReadWriter
+	contractMappingFile *os.File
+	contractMappingRW   *bufio.ReadWriter
 }
 
 func FatalError(err error) {
@@ -32,23 +33,41 @@ func FatalError(err error) {
 func CreateTxsRW(path string) *TxsRW {
 	file, err := os.OpenFile(path, os.O_APPEND|os.O_RDWR, 0600)
 	FatalError(err)
+	contractMappingFile, err := os.OpenFile(contractMappingName, os.O_APPEND|os.O_RDWR, 0600)
+	FatalError(err)
 
 	writer := bufio.NewWriter(file)
 	reader := bufio.NewReader(file)
 	readWriter := bufio.NewReadWriter(reader, writer)
+
+	contractMappingW := bufio.NewWriter(contractMappingFile)
+	contractMappingR := bufio.NewReader(contractMappingFile)
+	contractMappingRW := bufio.NewReadWriter(contractMappingR, contractMappingW)
 	return &TxsRW{
-		path:       path,
-		file:       file,
-		readWriter: readWriter,
+		path:                path,
+		file:                file,
+		readWriter:          readWriter,
+		contractMappingFile: contractMappingFile,
+		contractMappingRW:   contractMappingRW,
 	}
 }
 func (t *TxsRW) Close() {
 	t.readWriter.Flush()
 	t.file.Close()
+	t.contractMappingRW.Flush()
+	t.contractMappingFile.Close()
 }
 
 func (t *TxsRW) SaveTx(from, to, data []byte, amount, gas, gasPrice, shouldFail uint64) {
 	fmt.Fprintf(t.readWriter, "%x %x %x %d %d %d %v\n", from, to, data, amount, gas, gasPrice, shouldFail)
+}
+
+func (t *TxsRW) SaveTxCreateContract(from, to, contractId []byte, amount, gas, gasPrice, shouldFail uint64) {
+	fmt.Fprintf(t.readWriter, "%x %x %x %d %d %d %v\n", from, nil, nil, amount, gas, gasPrice, shouldFail)
+	// Create contract file:
+	_, err := os.Create("contracts/" + hex.EncodeToString(contractId) + ".txt")
+	fmt.Fprintf(t.contractMappingRW, "%x %x\n", to, contractId)
+	FatalError(err)
 }
 
 func (t *TxsRW) LoadTx() (from, to, data []byte, amount, gas, gasPrice, shouldFail uint64, err error) {
