@@ -1,22 +1,24 @@
 package main
 
 import (
-	"context"
-	"fmt"
 	"math/big"
 	"os"
 	"reflect"
+	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
+	"github.com/ethereum/go-ethereum/consensus/ethash"
+	"github.com/ethereum/go-ethereum/core"
+	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/hyperledger/burrow/crypto"
+	pb "gopkg.in/cheggaaa/pb.v1"
 
 	"github.com/ethereum/go-ethereum/common"
-	pb "gopkg.in/cheggaaa/pb.v1"
 
 	lutils "github.com/enriquefynn/sharding-runner/go-ethereum-client/tx-extractor/utils"
 
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/sirupsen/logrus"
 )
@@ -45,67 +47,101 @@ func main() {
 	ckABI, err := abi.JSON(jsonABI)
 	lutils.FatalError(err)
 
-	config := params.MainnetChainConfig
-	ctx := context.Background()
-	client, err := ethclient.Dial(os.Args[1])
-	lutils.FatalError(err)
-
-	// finalBlock := 7235717
-	lastClientBlock, _ := client.BlockByNumber(ctx, nil)
-	finalBlockNumber := lastClientBlock.Number()
-
 	contractAddr := common.HexToAddress("0x06012c8cf97bead5deae237070f9587f8e7a266d")
-	lutils.FatalError(err)
-	startedContractBlock := int64(4605167)
-	bar := pb.StartNew(int(finalBlockNumber.Int64() - startedContractBlock))
-
-	logrus.Printf("Testing cryptoKitties at Contract: %x at block %v until block %v", contractAddr,
-		startedContractBlock, finalBlockNumber)
-
-	signer := types.MakeSigner(config, big.NewInt(startedContractBlock))
+	startedContractBlock := uint64(4605167)
 
 	// mainAccount := acm.SigningAccounts([]*acm.PrivateAccount{acm.GeneratePrivateAccountFromSecret("0")})[0]
-	txsFile := lutils.CreateTxsRW(os.Args[2])
+	txsFile := lutils.CreateTxsRW(os.Args[1])
 
 	simulatedAccounts := lutils.NewSimulatedSender()
 
 	var contractSimulatedAddr common.Address
+	var (
+		config      = params.MainnetChainConfig
+		signer      = types.MakeSigner(config, big.NewInt(int64(startedContractBlock)))
+		cache       = 4098
+		cacheConfig = core.CacheConfig{
+			Disabled:      true,
+			TrieTimeLimit: 5 * time.Minute,
+		}
+		engine   = ethash.NewFullFaker()
+		ethDb, _ = ethdb.NewLDBDatabase(os.Args[2], cache, 256)
+		vmConfig = vm.Config{}
+	)
+	blockchain, err := core.NewBlockChain(ethDb, &cacheConfig, config, engine, vmConfig, func(*types.Block) bool { return true })
+	lutils.FatalError(err)
 
-	for blkN := big.NewInt(startedContractBlock); blkN.Cmp(finalBlockNumber) == -1; blkN = blkN.Add(blkN, common.Big1) {
-		block, err := client.BlockByNumber(ctx, blkN)
-		lutils.FatalError(err)
-		for _, tx := range block.Transactions() {
-			receipt, err := client.TransactionReceipt(ctx, tx.Hash())
-			lutils.FatalError(err)
-			from, err := signer.Sender(tx)
-			lutils.FatalError(err)
+	finalBlockNumber := blockchain.CurrentBlock().Number().Uint64()
 
-			txValue, txGasPrice, txGas, txData := tx.Value(), tx.GasPrice(), tx.Gas(), tx.Data()
+	bar := pb.StartNew(int(finalBlockNumber - startedContractBlock))
+	logrus.Printf("Testing cryptoKitties at Contract: %x at block %v until block %v", contractAddr,
+		startedContractBlock, finalBlockNumber)
+
+	for blkN := startedContractBlock; blkN != finalBlockNumber; blkN++ {
+		// 0: idk 1: fail 2: success
+		txStatusMap := make(map[common.Hash]uint64)
+		// ignore transaction
+		ignoreTx := make(map[common.Hash]bool)
+		block := blockchain.GetBlockByNumber(blkN)
+
+		// Search for Logs:
+		// If there is a log and is not the creating tx we can ignore the tx when searching for the tx, later
+		receipts := blockchain.GetReceiptsByHash(block.Hash())
+		for _, receipt := range receipts {
+			tx := block.Transaction(receipt.TxHash)
+			txStatusMap[receipt.TxHash] = receipt.Status + 1
+
+			// receipt.Bloom.TestBytes()
 
 			for _, log := range receipt.Logs {
-				if reflect.DeepEqual(log.Address, contractAddr) && tx.To() != nil {
+				txValue, txGasPrice, txGas, txData := tx.Value(), tx.GasPrice(), tx.Gas(), tx.Data()
+				from, err := signer.Sender(tx)
+				lutils.FatalError(err)
+				if reflect.DeepEqual(log.Address, contractAddr) {
+					// Mark to ignore when searching for txs
+					ignoreTx[tx.Hash()] = true
+					// Creating main contract
+					if tx.To() == nil {
+						simulatedFrom := simulatedAccounts.GetOrMake(from)
+						logrus.Info("Creating main contract")
+						contractID := tryCreateContract(simulatedAccounts, txsFile, simulatedFrom.GetAddress(), contractAddr, tx, receipt.Status, true)
+						contractSimulatedAddr = common.BytesToAddress(contractID)
+						break
+					}
 					simulatedFrom := simulatedAccounts.GetOrMake(from)
 					// logrus.Infof("%x LOG TO CONTRACT %x %x", tx.Hash(), log.Topics, log.Data)
-					senderCode, err := client.CodeAt(ctx, *tx.To(), nil)
+					st, err := blockchain.State()
 					lutils.FatalError(err)
+					senderCodeSize := st.GetCodeSize(*tx.To())
 					// Called by contract, should deploy it!
-					contractID := tryCreateContract(simulatedAccounts, txsFile, simulatedFrom.GetAddress(), *tx.To(), tx, receipt.Status, len(senderCode) != 0)
+					contractID := tryCreateContract(simulatedAccounts, txsFile, simulatedFrom.GetAddress(), *tx.To(), tx, receipt.Status, senderCodeSize != 0)
 					txsFile.SaveTx(simulatedFrom.GetAddress().Bytes(), contractID, txData, txValue, txGasPrice, txGas, receipt.Status)
-					goto end
 				}
 			}
-			// transaction from the contract shouldn't happen
+		}
+
+		for _, tx := range block.Transactions() {
+			// ignore txs that create contracts
+			if tx.To() == nil {
+				continue
+			}
+			// Already did in the log || is not interesting
+			if ignoreTx[tx.Hash()] || !reflect.DeepEqual(tx.To().Bytes(), contractAddr.Bytes()) {
+				continue
+			}
+
+			if txStatusMap[tx.Hash()] == 0 {
+				logrus.Fatalf("Tx didn't emit any receipt %x, investigate", tx.Hash())
+			}
+
+			from, err := signer.Sender(tx)
+			lutils.FatalError(err)
+			txStatus := txStatusMap[tx.Hash()] - 1
+			txValue, txGasPrice, txGas, txData := tx.Value(), tx.GasPrice(), tx.Gas(), tx.Data()
+
 			if reflect.DeepEqual(from.Bytes(), contractAddr.Bytes()) {
 				logrus.Fatal("Contracts shouldn't call anything")
 
-				// transaction creating the main contract
-			} else if reflect.DeepEqual(receipt.ContractAddress.Bytes(), contractAddr.Bytes()) {
-				simulatedFrom := simulatedAccounts.GetOrMake(from)
-				logrus.Info("Creating main contract")
-				_, err := client.CodeAt(ctx, contractAddr, nil)
-				lutils.FatalError(err)
-				contractID := tryCreateContract(simulatedAccounts, txsFile, simulatedFrom.GetAddress(), contractAddr, tx, receipt.Status, true)
-				contractSimulatedAddr = common.BytesToAddress(contractID)
 				// transaction to the contract
 			} else if tx.To() != nil && reflect.DeepEqual(tx.To().Bytes(), contractAddr.Bytes()) {
 				simulatedFrom := simulatedAccounts.GetOrMake(from)
@@ -115,8 +151,8 @@ func main() {
 					copy(signature, txData[:4])
 					method, err := ckABI.MethodById(txData[:4])
 					if err != nil {
-						if receipt.Status == 1 {
-							lutils.FatalError(fmt.Errorf("Should have failed when calling a non-existant method: %x", tx.Hash()))
+						if txStatus == 1 {
+							logrus.Fatalf("Should have failed when calling a non-existant method: %x", tx.Hash())
 						}
 						// Should create contracts and set txData param for those
 					} else if method.Name == "setGeneScienceAddress" || method.Name == "setSaleAuctionAddress" ||
@@ -124,13 +160,14 @@ func main() {
 						method.Name == "setCEO" || method.Name == "setCFO" || method.Name == "setCOO" {
 						// 4 + (32-20)
 						newContractAddr := common.BytesToAddress(txData[16:])
-						senderCode, err := client.CodeAt(ctx, newContractAddr, nil)
+						st, err := blockchain.State()
 						lutils.FatalError(err)
+						senderCodeLen := st.GetCodeSize(newContractAddr)
 						// Create contract to set in function txData param
 						var newAddress common.Address
-						if len(senderCode) != 0 {
+						if senderCodeLen != 0 {
 							logrus.Infof("Creating contract for method: %v at %x original tx: %x", method.Name, tx.Data(), tx.Hash())
-							contractID := tryCreateContract(simulatedAccounts, txsFile, simulatedFrom.GetAddress(), newContractAddr, tx, receipt.Status, true)
+							contractID := tryCreateContract(simulatedAccounts, txsFile, simulatedFrom.GetAddress(), newContractAddr, tx, txStatus, true)
 
 							// Get mapped contract
 							newAddress = common.BytesToAddress(contractID)
@@ -142,21 +179,14 @@ func main() {
 						lutils.FatalError(err)
 						txData = append(signature, newMethod...)
 					} else {
-						if receipt.Status == 1 {
+						if txStatus == 1 {
 							logrus.Warnf("Tx %x should have failed (did not emit any log) or call the method %v", tx.Hash(), method.Name)
 						}
 					}
 				}
-				txsFile.SaveTx(simulatedFrom.GetAddress().Bytes(), contractSimulatedAddr.Bytes(), txData, txValue, txGasPrice, txGas, receipt.Status)
+				txsFile.SaveTx(simulatedFrom.GetAddress().Bytes(), contractSimulatedAddr.Bytes(), txData, txValue, txGasPrice, txGas, txStatus)
 			}
-
-			// end of transaction
-		end:
 		}
-		// if blkN.Cmp(big.NewInt(startedContractBlock+147)) == 0 {
-		// 	txsFile.Close()
-		// 	break
-		// }
 		bar.Increment()
 	}
 	bar.FinishPrint("The End!")

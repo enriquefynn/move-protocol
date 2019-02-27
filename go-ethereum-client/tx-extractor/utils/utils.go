@@ -69,7 +69,6 @@ func (t *TxsRW) Close() {
 
 func (t *TxsRW) SaveTx(from, to, data []byte, amount, gas *big.Int, gasPrice, shouldFail uint64) {
 	fmt.Fprintf(t.readWriter, "%x %x %x %d %d %d %v\n", from, to, data, amount, gas, gasPrice, shouldFail)
-	t.readWriter.Flush()
 }
 
 func (t *TxsRW) SaveTxCreateContract(from, to, contractId []byte, amount, gas *big.Int, gasPrice, shouldFail uint64) {
@@ -77,7 +76,6 @@ func (t *TxsRW) SaveTxCreateContract(from, to, contractId []byte, amount, gas *b
 	// Create contract file:
 	_, err := os.Create("contracts/" + hex.EncodeToString(contractId) + ".txt")
 	fmt.Fprintf(t.contractMappingRW, "%x %x\n", to, contractId)
-	t.contractMappingRW.Flush()
 	FatalError(err)
 }
 
