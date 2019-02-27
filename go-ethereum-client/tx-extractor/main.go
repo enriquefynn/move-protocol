@@ -55,7 +55,9 @@ func main() {
 
 	simulatedAccounts := lutils.NewSimulatedSender()
 
-	var contractSimulatedAddr common.Address
+	_, contractSimulatedId := simulatedAccounts.ShouldCreateContract(contractAddr)
+	contractSimulatedAddr := common.BigToAddress(big.NewInt(contractSimulatedId))
+
 	var (
 		config      = params.MainnetChainConfig
 		signer      = types.MakeSigner(config, big.NewInt(int64(startedContractBlock)))
@@ -77,6 +79,8 @@ func main() {
 	logrus.Printf("Testing cryptoKitties at Contract: %x at block %v until block %v", contractAddr,
 		startedContractBlock, finalBlockNumber)
 
+	blockchainState, err := blockchain.State()
+	lutils.FatalError(err)
 	for blkN := startedContractBlock; blkN != finalBlockNumber; blkN++ {
 		// 0: idk 1: fail 2: success
 		txStatusMap := make(map[common.Hash]uint64)
@@ -91,8 +95,6 @@ func main() {
 			tx := block.Transaction(receipt.TxHash)
 			txStatusMap[receipt.TxHash] = receipt.Status + 1
 
-			// receipt.Bloom.TestBytes()
-
 			for _, log := range receipt.Logs {
 				txValue, txGasPrice, txGas, txData := tx.Value(), tx.GasPrice(), tx.Gas(), tx.Data()
 				from, err := signer.Sender(tx)
@@ -100,22 +102,25 @@ func main() {
 				if reflect.DeepEqual(log.Address, contractAddr) {
 					// Mark to ignore when searching for txs
 					ignoreTx[tx.Hash()] = true
-					// Creating main contract
-					if tx.To() == nil {
-						simulatedFrom := simulatedAccounts.GetOrMake(from)
-						logrus.Info("Creating main contract")
-						contractID := tryCreateContract(simulatedAccounts, txsFile, simulatedFrom.GetAddress(), contractAddr, tx, receipt.Status, true)
-						contractSimulatedAddr = common.BytesToAddress(contractID)
-						break
-					}
 					simulatedFrom := simulatedAccounts.GetOrMake(from)
-					// logrus.Infof("%x LOG TO CONTRACT %x %x", tx.Hash(), log.Topics, log.Data)
-					st, err := blockchain.State()
-					lutils.FatalError(err)
-					senderCodeSize := st.GetCodeSize(*tx.To())
-					// Called by contract, should deploy it!
-					contractID := tryCreateContract(simulatedAccounts, txsFile, simulatedFrom.GetAddress(), *tx.To(), tx, receipt.Status, senderCodeSize != 0)
-					txsFile.SaveTx(simulatedFrom.GetAddress().Bytes(), contractID, txData, txValue, txGasPrice, txGas, receipt.Status)
+					// Creating a contract
+					if tx.To() == nil {
+						if reflect.DeepEqual(receipt.ContractAddress, contractAddr) {
+							logrus.Infof("Creating main contract: %x", tx.Hash())
+							tryCreateContract(simulatedAccounts, txsFile, simulatedFrom.GetAddress(), contractAddr, tx, receipt.Status, true)
+						} else {
+							logrus.Infof("Creating contract that calls CK on init: %x", tx.Hash())
+							tryCreateContract(simulatedAccounts, txsFile, simulatedFrom.GetAddress(), contractAddr, tx, receipt.Status, true)
+						}
+					} else {
+						// logrus.Infof("%x LOG TO CONTRACT %x %x", tx.Hash(), log.Topics, log.Data)
+
+						senderCodeSize := blockchainState.GetCodeSize(*tx.To())
+						// Called by contract, should deploy it!
+						contractID := tryCreateContract(simulatedAccounts, txsFile, simulatedFrom.GetAddress(), *tx.To(), tx, receipt.Status, senderCodeSize != 0)
+						txsFile.SaveTx(simulatedFrom.GetAddress().Bytes(), contractID, txData, txValue, txGasPrice, txGas, receipt.Status)
+					}
+					break
 				}
 			}
 		}
@@ -160,9 +165,7 @@ func main() {
 						method.Name == "setCEO" || method.Name == "setCFO" || method.Name == "setCOO" {
 						// 4 + (32-20)
 						newContractAddr := common.BytesToAddress(txData[16:])
-						st, err := blockchain.State()
-						lutils.FatalError(err)
-						senderCodeLen := st.GetCodeSize(newContractAddr)
+						senderCodeLen := blockchainState.GetCodeSize(newContractAddr)
 						// Create contract to set in function txData param
 						var newAddress common.Address
 						if senderCodeLen != 0 {
