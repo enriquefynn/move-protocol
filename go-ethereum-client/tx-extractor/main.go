@@ -47,7 +47,7 @@ func main() {
 	ckABI, err := abi.JSON(jsonABI)
 	lutils.FatalError(err)
 
-	contractAddr := common.HexToAddress("0x06012c8cf97bead5deae237070f9587f8e7a266d")
+	mainContractAddr := common.HexToAddress("0x06012c8cf97bead5deae237070f9587f8e7a266d")
 	startedContractBlock := uint64(4605167)
 
 	// mainAccount := acm.SigningAccounts([]*acm.PrivateAccount{acm.GeneratePrivateAccountFromSecret("0")})[0]
@@ -55,8 +55,7 @@ func main() {
 
 	simulatedAccounts := lutils.NewSimulatedSender()
 
-	_, contractSimulatedId := simulatedAccounts.ShouldCreateContract(contractAddr)
-	contractSimulatedAddr := common.BigToAddress(big.NewInt(contractSimulatedId))
+	var contractSimulatedAddr common.Address
 
 	var (
 		config      = params.MainnetChainConfig
@@ -76,7 +75,7 @@ func main() {
 	finalBlockNumber := blockchain.CurrentBlock().Number().Uint64()
 
 	bar := pb.StartNew(int(finalBlockNumber - startedContractBlock))
-	logrus.Printf("Testing cryptoKitties at Contract: %x at block %v until block %v", contractAddr,
+	logrus.Printf("Testing cryptoKitties at Contract: %x at block %v until block %v", mainContractAddr,
 		startedContractBlock, finalBlockNumber)
 
 	blockchainState, err := blockchain.State()
@@ -99,18 +98,18 @@ func main() {
 				txValue, txGasPrice, txGas, txData := tx.Value(), tx.GasPrice(), tx.Gas(), tx.Data()
 				from, err := signer.Sender(tx)
 				lutils.FatalError(err)
-				if reflect.DeepEqual(log.Address, contractAddr) {
+				if reflect.DeepEqual(log.Address, mainContractAddr) {
 					// Mark to ignore when searching for txs
 					ignoreTx[tx.Hash()] = true
 					simulatedFrom := simulatedAccounts.GetOrMake(from)
 					// Creating a contract
 					if tx.To() == nil {
-						if reflect.DeepEqual(receipt.ContractAddress, contractAddr) {
-							logrus.Infof("Creating main contract: %x", tx.Hash())
-							tryCreateContract(simulatedAccounts, txsFile, simulatedFrom.GetAddress(), contractAddr, tx, receipt.Status, true)
+						contractIDBytes := tryCreateContract(simulatedAccounts, txsFile, simulatedFrom.GetAddress(), receipt.ContractAddress, tx, receipt.Status, true)
+						if reflect.DeepEqual(receipt.ContractAddress, mainContractAddr) {
+							contractSimulatedAddr = common.BytesToAddress(contractIDBytes)
+							logrus.Infof("Creating main contract: %x addr: %x", tx.Hash(), receipt.ContractAddress)
 						} else {
-							logrus.Infof("Creating contract that calls CK on init: %x", tx.Hash())
-							tryCreateContract(simulatedAccounts, txsFile, simulatedFrom.GetAddress(), contractAddr, tx, receipt.Status, true)
+							logrus.Infof("Creating contract that calls CK on init %x addr: %x on %x", tx.Hash(), receipt.ContractAddress, contractIDBytes)
 						}
 					} else {
 						// logrus.Infof("%x LOG TO CONTRACT %x %x", tx.Hash(), log.Topics, log.Data)
@@ -131,7 +130,7 @@ func main() {
 				continue
 			}
 			// Already did in the log || is not interesting
-			if ignoreTx[tx.Hash()] || !reflect.DeepEqual(tx.To().Bytes(), contractAddr.Bytes()) {
+			if ignoreTx[tx.Hash()] || !reflect.DeepEqual(tx.To().Bytes(), mainContractAddr.Bytes()) {
 				continue
 			}
 
@@ -144,11 +143,11 @@ func main() {
 			txStatus := txStatusMap[tx.Hash()] - 1
 			txValue, txGasPrice, txGas, txData := tx.Value(), tx.GasPrice(), tx.Gas(), tx.Data()
 
-			if reflect.DeepEqual(from.Bytes(), contractAddr.Bytes()) {
+			if reflect.DeepEqual(from.Bytes(), mainContractAddr.Bytes()) {
 				logrus.Fatal("Contracts shouldn't call anything")
 
 				// transaction to the contract
-			} else if tx.To() != nil && reflect.DeepEqual(tx.To().Bytes(), contractAddr.Bytes()) {
+			} else if tx.To() != nil && reflect.DeepEqual(tx.To().Bytes(), mainContractAddr.Bytes()) {
 				simulatedFrom := simulatedAccounts.GetOrMake(from)
 				// Calling a method
 				if len(txData) >= 4 {
