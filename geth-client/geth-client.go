@@ -29,8 +29,8 @@ func clientClosedLoop(key *ecdsa.PrivateKey, client *ethclient.Client, blockChan
 	}
 	waitForTx := false
 
+	var txHash common.Hash
 	for {
-		var txHash common.Hash
 		if !waitForTx {
 			fmt.Printf("Sending tx client: %x nonce: %v\n", address, nonce)
 			waitForTx = true
@@ -86,6 +86,10 @@ func main() {
 		case head := <-headerBlock:
 			// blk, _ := client.BlockByNumber(ctx, head.Number)
 			block, err := client.BlockByHash(ctx, head.Hash())
+			fmt.Printf("Block: %v %v\n", block.Number(), len(block.Transactions()))
+			for _, tx := range block.Transactions() {
+				fmt.Printf("Tx: %x\n", tx.Hash())
+			}
 			if err != nil {
 				log.Fatalf("Error getting block: %v\n", err)
 			}

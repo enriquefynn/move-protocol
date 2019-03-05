@@ -15,9 +15,12 @@ import (
 
 type Config struct {
 	Contracts struct {
-		Deploy  bool   `yaml:"deploy"`
-		Path    string `yaml:"path"`
-		Address string `yaml:"address"`
+		Deploy                 bool   `yaml:"deploy"`
+		Path                   string `yaml:"path"`
+		Address                string `yaml:"address"`
+		ReplayTransactionsPath string `yaml:"replayTransactionsPath"`
+		ContractsFilesPath     string `yaml:"contractsFilesPath"`
+		ContractMappingPath    string `yaml:"contractMappingPath"`
 	}
 	Benchmark struct {
 		Clients int    `yaml:"clients"`
@@ -65,18 +68,18 @@ func DeployContract(address crypto.Address, sequence uint64, dataPath string) pa
 	return payloadTx
 }
 
-func CallContractTx(callingAddress crypto.Address, contractAddress *crypto.Address, sequence uint64, data binary.HexBytes, shouldFail byte) payload.CallTx {
+func CallContractTx(callingAddress crypto.Address, contractAddress *crypto.Address, sequence uint64, data binary.HexBytes, shouldNotRevert bool) payload.CallTx {
 	payloadTx := payload.CallTx{
 		Input: &payload.TxInput{
 			Address:  callingAddress,
 			Amount:   10000,
 			Sequence: sequence,
 		},
-		Fee:      1,
-		GasLimit: 10000,
-		Data:     data,
-		Address:  contractAddress,
-		// ShouldFail: shouldFail,
+		Fee:             1,
+		GasLimit:        10000,
+		Data:            data,
+		Address:         contractAddress,
+		ShouldNotRevert: shouldNotRevert,
 	}
 	return payloadTx
 }

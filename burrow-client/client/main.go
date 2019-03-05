@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/enriquefynn/burrow-client/utils"
+	"github.com/enriquefynn/sharding-runner/burrow-client/utils"
 	"github.com/hyperledger/burrow/acm"
 	"github.com/hyperledger/burrow/crypto"
 	"github.com/hyperledger/burrow/deploy/def"
@@ -40,7 +40,7 @@ func clientClosedLoop(signingAccount []acm.AddressableSigner, account *acm.Accou
 	for !shouldExit {
 		account.Sequence++
 
-		payloadTx := utils.CallContractTx(addr, &contractAddress, account.Sequence, nil)
+		payloadTx := utils.CallContractTx(addr, &contractAddress, account.Sequence, nil, false)
 
 		txExecution, err := client.SignTxOnBehalfOf(payload.Payload(&payloadTx), signingAccount)
 		checkFatalError(err)
