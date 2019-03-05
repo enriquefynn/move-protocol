@@ -191,5 +191,6 @@ func main() {
 		}
 		bar.Increment()
 	}
+	txsFile.Close()
 	bar.FinishPrint("The End!")
 }

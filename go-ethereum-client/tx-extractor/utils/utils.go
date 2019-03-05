@@ -41,9 +41,11 @@ func CreateTxsRW(path string) *TxsRW {
 	FatalError(err)
 	contractMappingFile, err := os.OpenFile(contractMappingName, os.O_APPEND|os.O_RDWR, 0600)
 	if os.IsNotExist(err) {
-		contractMappingFile, err = os.Create(contractMappingName)
+		logrus.Infof("No file named %v", contractMappingName)
+		// contractMappingFile, err = os.Create(contractMappingName)
+	} else {
+		FatalError(err)
 	}
-	FatalError(err)
 
 	writer := bufio.NewWriter(file)
 	reader := bufio.NewReader(file)
@@ -79,42 +81,58 @@ func (t *TxsRW) SaveTxCreateContract(from, to, contractId []byte, amount, gas *b
 	FatalError(err)
 }
 
-func (t *TxsRW) LoadTx() (from, to, data []byte, amount, gas, gasPrice, shouldFail uint64, err error) {
+type Transaction struct {
+	From            []byte
+	To              []byte
+	Data            []byte
+	Amount          *big.Int
+	Gas             *big.Int
+	GasPrice        uint64
+	ShouldNotRevert bool
+}
+
+func (t *TxsRW) LoadTx() (*Transaction, error) {
+	tx := Transaction{}
+
 	line, err := t.readWriter.ReadString('\n')
 	if err != nil {
-		return
+		return nil, err
 	}
 	splitLine := strings.Split(line, " ")
 
-	if splitLine[0] == "" {
-		from = nil
-	} else {
-		from = common.HexToAddress(splitLine[0]).Bytes()
+	if splitLine[0] != "" {
+		tx.From = common.HexToAddress(splitLine[0]).Bytes()
 	}
-	if splitLine[1] == "" {
-		to = nil
-	} else {
-		to = common.HexToAddress(splitLine[1]).Bytes()
+	if splitLine[1] != "" {
+		tx.To = common.HexToAddress(splitLine[1]).Bytes()
 	}
-	if splitLine[2] == "" {
-		data = nil
-	} else {
-		data = common.HexToAddress(splitLine[2]).Bytes()
+	if splitLine[2] != "" {
+		tx.Data, err = hex.DecodeString(splitLine[2])
+		if err != nil {
+			return nil, err
+		}
 	}
-	amount, err = strconv.ParseUint(splitLine[3], 10, 64)
+	tx.Amount = new(big.Int)
+	var failed bool
+	tx.Amount, failed = tx.Amount.SetString(splitLine[3], 10)
+	if !failed {
+		return nil, err
+	}
+	tx.Gas = new(big.Int)
+	tx.Gas, failed = tx.Amount.SetString(splitLine[4], 10)
+	if !failed {
+		return nil, err
+	}
+	tx.GasPrice, err = strconv.ParseUint(splitLine[5], 10, 64)
 	if err != nil {
-		return
+		return nil, err
 	}
-	gas, err = strconv.ParseUint(splitLine[4], 10, 64)
+	shouldFail, err := strconv.ParseUint(splitLine[6][:len(splitLine[6])-1], 10, 64)
 	if err != nil {
-		return
+		return nil, err
 	}
-	gasPrice, err = strconv.ParseUint(splitLine[5], 10, 64)
-	if err != nil {
-		return
-	}
-	shouldFail, err = strconv.ParseUint(splitLine[6][:len(splitLine[6])-1], 10, 64)
-	return
+	tx.ShouldNotRevert = (shouldFail == 1)
+	return &tx, err
 }
 
 type SimulatedSender struct {
