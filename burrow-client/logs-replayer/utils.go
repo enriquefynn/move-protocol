@@ -68,7 +68,7 @@ func (lr *LogsReader) Advance(n int) {
 
 var l int = 3
 
-func (lr *LogsReader) LoadLog() (*txs.Envelope, error) {
+func (lr *LogsReader) LoadNextLog() (*payload.CallTx, *SeqAccount, error) {
 	// logrus.Infof("LINE: %v", l)
 	l++
 	var fromAcc *SeqAccount
@@ -80,7 +80,7 @@ func (lr *LogsReader) LoadLog() (*txs.Envelope, error) {
 
 	line, err := lr.logsReader.ReadString('\n')
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	splitLine := strings.Split(line, " ")
 	// 0      1           2            3         4          5          6         7        8        9          10
@@ -90,15 +90,15 @@ func (lr *LogsReader) LoadLog() (*txs.Envelope, error) {
 		simulatedOwner := lr.getOrCreateAccount(owner)
 		matronID, err := strconv.ParseInt(splitLine[6], 10, 64)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		sireID, err := strconv.Atoi(splitLine[8])
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		genes, succ := big.NewInt(0).SetString(splitLine[10], 10)
 		if !succ {
-			return nil, err
+			return nil, nil, err
 		}
 
 		// Should call createPromoKitty(uint256 _genes, address _owner)
@@ -109,7 +109,7 @@ func (lr *LogsReader) LoadLog() (*txs.Envelope, error) {
 			// logrus.Infof("createPromoKitty")
 			txInput, err := lr.abi.Methods["createPromoKitty"].Inputs.Pack(genes, simulatedOwner.account.GetAddress())
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			tx.Data = append(lr.abi.Methods["createPromoKitty"].Id(), txInput...)
 		} else {
@@ -119,7 +119,7 @@ func (lr *LogsReader) LoadLog() (*txs.Envelope, error) {
 			// Should call giveBirth(uint256 _matronId)
 			txInput, err := lr.abi.Methods["giveBirth"].Inputs.Pack(big.NewInt(matronID))
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			tx.Data = append(lr.abi.Methods["giveBirth"].Id(), txInput...)
 		}
@@ -135,18 +135,18 @@ func (lr *LogsReader) LoadLog() (*txs.Envelope, error) {
 		simulatedOwner := lr.getOrCreateAccount(owner)
 		matronID, err := strconv.ParseInt(splitLine[4], 10, 64)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		sireID, err := strconv.ParseInt(splitLine[6], 10, 64)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
 		// Should call breed(uint256 _matronId, uint256 _sireId)
 		txInput, err := lr.abi.Methods["breed"].Inputs.Pack(big.NewInt(matronID), big.NewInt(sireID))
 		tx.Data = append(lr.abi.Methods["breed"].Id(), txInput...)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		fromAcc = simulatedOwner
 		//              0      1    2    3    4      5        6
@@ -159,7 +159,7 @@ func (lr *LogsReader) LoadLog() (*txs.Envelope, error) {
 
 		tokenID, err := strconv.ParseInt(splitLine[6], 10, 64)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if splitLine[0] == "Approval" {
 			fromAcc = simulatedFrom
@@ -168,7 +168,7 @@ func (lr *LogsReader) LoadLog() (*txs.Envelope, error) {
 			txInput, err := lr.abi.Methods["approve"].Inputs.Pack(simulatedTo.account.GetAddress(), big.NewInt(tokenID))
 			tx.Data = append(lr.abi.Methods["approve"].Id(), txInput...)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 		} else {
 			// Should call transferFrom(address _from, address _to, uint256 _tokenId)
@@ -178,7 +178,7 @@ func (lr *LogsReader) LoadLog() (*txs.Envelope, error) {
 				// logrus.Infof("transferFrom")
 				txInput, err := lr.abi.Methods["transferFrom"].Inputs.Pack(simulatedFrom.account.GetAddress(), simulatedTo.account.GetAddress(), big.NewInt(tokenID))
 				if err != nil {
-					return nil, err
+					return nil, nil, err
 				}
 				tx.Data = append(lr.abi.Methods["transferFrom"].Id(), txInput...)
 				lr.deleteAllowed(simulatedTo.account.GetAddress(), tokenID)
@@ -188,26 +188,35 @@ func (lr *LogsReader) LoadLog() (*txs.Envelope, error) {
 				// logrus.Infof("transfer")
 				txInput, err := lr.abi.Methods["transfer"].Inputs.Pack(simulatedTo.account.GetAddress(), big.NewInt(tokenID))
 				if err != nil {
-					return nil, err
+					return nil, nil, err
 				}
 				tx.Data = append(lr.abi.Methods["transfer"].Id(), txInput...)
 			}
 		}
 	} else {
-		return nil, fmt.Errorf("Error, unknown event %v", splitLine[0])
+		return nil, nil, fmt.Errorf("Error, unknown event %v", splitLine[0])
 	}
 
-	txPayload := payload.Payload(tx)
-	fromAcc.sequence++
+	// txPayload := payload.Payload(tx)
+	// fromAcc.sequence++
 	tx.Input = &payload.TxInput{
-		Address:  fromAcc.account.GetAddress(),
-		Amount:   1,
-		Sequence: fromAcc.sequence,
+		Address: fromAcc.account.GetAddress(),
+		Amount:  1,
+		// Sequence: fromAcc.sequence,
 	}
 
-	env := txs.Enclose(lr.chainID, txPayload)
-	err = env.Sign(fromAcc.account)
+	// env := txs.Enclose(lr.chainID, txPayload)
+	// err = env.Sign(fromAcc.account)
 
+	return tx, fromAcc, err
+}
+
+func (lr *LogsReader) SignTx(tx *payload.CallTx, from *SeqAccount) (*txs.Envelope, error) {
+	txPayload := payload.Payload(tx)
+	from.sequence++
+	tx.Input.Sequence = from.sequence
+	env := txs.Enclose(lr.chainID, txPayload)
+	err := env.Sign(from.account)
 	return env, err
 }
 

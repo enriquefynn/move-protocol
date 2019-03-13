@@ -24,42 +24,34 @@ func checkFatalError(err error) {
 	}
 }
 
-func getTransaction(config *utils.Config, logsReader *LogsReader) (<-chan *txs.Envelope, error) {
-	replayLog := config.Contracts.ReplayTransactionsPath
-	logrus.Infof("Logs path: %v", replayLog)
-
-	chnl := make(chan *txs.Envelope)
-	go func() {
-		for {
-			tx, err := logsReader.LoadLog()
-			chnl <- tx
-			if err != nil {
-				logrus.Infof("Stopping reading txs: %v", err)
-				close(chnl)
-				break
-			}
-		}
-	}()
-	return chnl, nil
-}
-
-func clientReplayer(client *def.Client, tx *txs.Envelope) {
+func clientReplayer(client *def.Client, tx *txs.Envelope, txIdx int, responseCh chan<- int) {
 	resp, err := client.BroadcastEnvelope(tx)
 	fatalError(err)
 	if resp.Exception != nil {
 		logrus.Fatalf("Exception in tx: %v : %v", tx, resp.Exception)
 	}
-	logrus.Infof("Resp: %v", resp.Exception)
 	logrus.Infof("Resp: %v", resp.Events[1].Log.Data)
 }
 
-func clientEmitter(client *def.Client, txChannel <-chan *txs.Envelope) {
+func clientEmitter(client *def.Client, logsReader *LogsReader) {
+	// kittyMap := make(map[uint]uint)
+	responseCh := make(chan<- int)
 	txs := 0
+	txIdx := 0
 	startTime := time.Now()
-	for tx := range txChannel {
-		txData := tx.Tx.Payload.Any().CallTx.Data
-		logrus.Infof("INPUT: %v", txData)
-		go clientReplayer(client, tx)
+
+	for {
+		tx, signingAccount, err := logsReader.LoadNextLog()
+		if err != nil {
+			logrus.Infof("Stopping reading txs: %v", err)
+			break
+		}
+		// txData := tx.Tx.Payload.Any().CallTx.Data
+		// logrus.Infof("INPUT: %v", txData)
+		fatalError(err)
+		signedTx, err := logsReader.SignTx(tx, signingAccount)
+		clientReplayer(client, signedTx, txIdx, responseCh)
+		txIdx++
 
 		// logrus.Infof("FROM: %v", to)
 		// go client.BroadcastEnvelope(tx)
@@ -152,9 +144,6 @@ func main() {
 	logrus.Infof("Deployed CK at: %v", address)
 	logsReader.SetContractAddr(address)
 
-	txChannel, err := getTransaction(&config, logsReader)
-	checkFatalError(err)
-
 	go listenBlockHeaders(client)
-	clientEmitter(client, txChannel)
+	clientEmitter(client, logsReader)
 }
