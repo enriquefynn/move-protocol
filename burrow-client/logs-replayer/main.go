@@ -1,16 +1,14 @@
 package main
 
 import (
-	"context"
-	"fmt"
 	"io/ioutil"
 	"os"
 	"time"
 
+	"github.com/hyperledger/burrow/execution/exec"
+
 	"github.com/hyperledger/burrow/acm"
-	"github.com/hyperledger/burrow/crypto"
 	"github.com/hyperledger/burrow/deploy/def"
-	"github.com/hyperledger/burrow/rpc/rpcevents"
 	"github.com/hyperledger/burrow/txs"
 
 	"github.com/enriquefynn/sharding-runner/burrow-client/utils"
@@ -18,104 +16,73 @@ import (
 	yaml "gopkg.in/yaml.v2"
 )
 
-func checkFatalError(err error) {
-	if err != nil {
-		logrus.Fatalf("Error: %v", err)
-	}
-}
-
-func clientReplayer(client *def.Client, tx *txs.Envelope, txIdx int, responseCh chan<- int) {
+func clientReplayer(client *def.Client, tx *txs.Envelope, responseCh chan<- int, blockChan <-chan *exec.BlockExecution) {
 	resp, err := client.BroadcastEnvelope(tx)
 	fatalError(err)
+	// logrus.Infof("Resp: %v", tx, resp)
 	if resp.Exception != nil {
 		logrus.Fatalf("Exception in tx: %v : %v", tx, resp.Exception)
 	}
-	logrus.Infof("Resp: %v", resp.Events[1].Log.Data)
+	// logrus.Infof("Resp: %v", resp.Events[1].Log.Data)
 }
 
-func clientEmitter(client *def.Client, logsReader *LogsReader) {
-	// kittyMap := make(map[uint]uint)
-	responseCh := make(chan<- int)
-	txs := 0
-	txIdx := 0
-	startTime := time.Now()
+type methodAndID struct {
+	method string
+	ids    []int
+}
 
-	for {
-		tx, signingAccount, err := logsReader.LoadNextLog()
-		if err != nil {
-			logrus.Infof("Stopping reading txs: %v", err)
-			break
-		}
-		// txData := tx.Tx.Payload.Any().CallTx.Data
-		// logrus.Infof("INPUT: %v", txData)
+func clientEmitter(config *utils.Config, client *def.Client, logsReader *LogsReader, blockChan chan *exec.BlockExecution) {
+	idMap := make(map[int]int)
+
+	outstandingTxs := config.Benchmark.OutstandingTxs
+
+	sentTxs := make(map[string]methodAndID)
+	for i := 0; i < outstandingTxs; i++ {
+		txResponse, err := logsReader.LoadNextLog()
 		fatalError(err)
-		signedTx, err := logsReader.SignTx(tx, signingAccount)
-		clientReplayer(client, signedTx, txIdx, responseCh)
-		txIdx++
-
-		// logrus.Infof("FROM: %v", to)
-		// go client.BroadcastEnvelope(tx)
-		// time.Sleep(1000000)
-
-		duration := time.Now().Sub(startTime).Seconds()
-		txs++
-		if duration >= 1 {
-			logrus.Infof("[CLI] Txs/s: %v", txs)
-			txs = 0
-			startTime = time.Now()
+		signedTx := txResponse.Sign()
+		fatalError(err)
+		_, err = client.BroadcastEnvelopeAsync(signedTx)
+		fatalError(err)
+		sentTxs[string(signedTx.Tx.Hash())] = methodAndID{
+			method: txResponse.methodName,
+			ids:    txResponse.originalIds,
 		}
 	}
-}
 
-func createContract(config *utils.Config, accounts *LogsReader, client *def.Client, path string, args ...interface{}) (*crypto.Address, error) {
-	contractEnv, err := accounts.CreateContract(path, args...)
-	if err != nil {
-		return nil, err
-	}
-
-	receipt, err := client.BroadcastEnvelope(contractEnv)
-	if err != nil {
-		return nil, err
-	}
-	if receipt.Exception != nil {
-		return nil, err
-	}
-	contract := receipt.Receipt.ContractAddress
-	account, err := client.GetAccount(contract)
-	if len(account.Code) == 0 {
-		return nil, fmt.Errorf("Contract creation failed : %v", account)
-	}
-	return &contract, nil
-}
-
-func listenBlockHeaders(client *def.Client) {
-	end := rpcevents.StreamBound()
-
-	request := &rpcevents.BlocksRequest{
-		BlockRange: rpcevents.NewBlockRange(rpcevents.AbsoluteBound(1), end),
-	}
-	clientEvents, err := client.Query()
-	signedHeaders, err := clientEvents.ListSignedHeaders(context.Background(), request)
-	checkFatalError(err)
-	// firstBlock, err := signedHeaders.Recv()
-	// checkFatalError(err)
-	startTime := time.Now()
-	totalTxs := int64(0)
-	commence := false
 	for {
-		resp, err := signedHeaders.Recv()
-		checkFatalError(err)
-		if !commence && resp.SignedHeader.NumTxs > 0 {
-			logrus.Infof("Commence at: %v %v", resp.SignedHeader.Height, resp.SignedHeader.Time)
-			commence = true
-			startTime = resp.SignedHeader.Time
-		}
-		if commence {
-			elapsedTime := resp.SignedHeader.Time.Sub(startTime)
-			startTime = resp.SignedHeader.Time
-			totalTxs += resp.SignedHeader.NumTxs
-			logrus.Infof("[SRV] Txs: %v, elapsed time: %v", totalTxs, elapsedTime)
-			logrus.Infof("[SRV] Tx/s: %v", float64(resp.SignedHeader.NumTxs)/elapsedTime.Seconds())
+		block := <-blockChan
+		logrus.Infof("RECEIVED BLOCK %v", block.Header.Height)
+		for _, tx := range block.TxExecutions {
+			txHash := string(tx.TxHash)
+			// Found tx
+			if sentTx, ok := sentTxs[txHash]; ok {
+				if sentTx.method == "createPromoKitty" {
+					idMap[sentTx.ids[0]] = logsReader.extractIDTransfer(tx.Events[1])
+				} else if sentTx.method == "giveBirth" {
+					idMap[sentTx.ids[0]] = logsReader.extractIDTransfer(tx.Events[1])
+				} else if sentTx.method == "breed" {
+
+				} else if sentTx.method == "approve" {
+
+				} else if sentTx.method == "transferFrom" {
+
+				} else if sentTx.method == "transfer" {
+				}
+				delete(sentTxs, txHash)
+				txResponse, err := logsReader.LoadNextLog()
+				if err != nil {
+					logrus.Infof("Stopping reading txs: %v", err)
+					break
+				}
+				signedTx := txResponse.Sign()
+				_, err = client.BroadcastEnvelopeAsync(signedTx)
+				fatalError(err)
+				sentTxs[string(signedTx.Tx.Hash())] = methodAndID{
+					method: txResponse.methodName,
+					ids:    txResponse.originalIds,
+				}
+			}
 		}
 	}
 }
@@ -144,6 +111,10 @@ func main() {
 	logrus.Infof("Deployed CK at: %v", address)
 	logsReader.SetContractAddr(address)
 
+	blockChan := make(chan *exec.BlockExecution)
+
 	go listenBlockHeaders(client)
-	clientEmitter(client, logsReader)
+	go listenBlocks(client, blockChan)
+
+	clientEmitter(&config, client, logsReader, blockChan)
 }

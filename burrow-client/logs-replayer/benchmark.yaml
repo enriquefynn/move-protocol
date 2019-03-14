@@ -17,3 +17,4 @@ benchmark:
   clients: 1
   timeout: 10
   address: "127.0.0.1:20002"
+  outstandingTxs: 300
