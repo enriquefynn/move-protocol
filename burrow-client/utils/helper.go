@@ -17,15 +17,20 @@ type Config struct {
 	Contracts struct {
 		Deploy                 bool   `yaml:"deploy"`
 		Path                   string `yaml:"path"`
+		CKABI                  string `yaml:"ckABI"`
+		GenePath               string `yaml:"genePath"`
+		GeneABI                string `yaml:"geneABI"`
 		Address                string `yaml:"address"`
 		ReplayTransactionsPath string `yaml:"replayTransactionsPath"`
 		ContractsFilesPath     string `yaml:"contractsFilesPath"`
 		ContractMappingPath    string `yaml:"contractMappingPath"`
 	}
 	Benchmark struct {
-		Clients int    `yaml:"clients"`
-		Timeout int    `yaml:"timeout"`
-		Address string `yaml:"address"`
+		ChainID        string `yaml:"chainID"`
+		Clients        int    `yaml:"clients"`
+		Timeout        int    `yaml:"timeout"`
+		Address        string `yaml:"address"`
+		OutstandingTxs int    `yaml:"outstandingTxs"`
 	}
 }
 
@@ -68,18 +73,17 @@ func DeployContract(address crypto.Address, sequence uint64, dataPath string) pa
 	return payloadTx
 }
 
-func CallContractTx(callingAddress crypto.Address, contractAddress *crypto.Address, sequence uint64, data binary.HexBytes, shouldNotRevert bool) payload.CallTx {
+func CallContractTx(callingAddress crypto.Address, contractAddress *crypto.Address, sequence uint64, data binary.HexBytes) payload.CallTx {
 	payloadTx := payload.CallTx{
 		Input: &payload.TxInput{
 			Address:  callingAddress,
 			Amount:   10000,
 			Sequence: sequence,
 		},
-		Fee:             1,
-		GasLimit:        10000,
-		Data:            data,
-		Address:         contractAddress,
-		ShouldNotRevert: shouldNotRevert,
+		Fee:      1,
+		GasLimit: 10000,
+		Data:     data,
+		Address:  contractAddress,
 	}
 	return payloadTx
 }
