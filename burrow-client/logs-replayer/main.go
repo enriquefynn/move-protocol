@@ -27,27 +27,60 @@ func clientReplayer(client *def.Client, tx *txs.Envelope, responseCh chan<- int,
 }
 
 type methodAndID struct {
-	method string
-	ids    []int
+	method  string
+	ids     []int
+	birthID int
 }
 
 func clientEmitter(config *utils.Config, client *def.Client, logsReader *LogsReader, blockChan chan *exec.BlockExecution) {
+	// txsChan := logsReader.LogsLoader()
+	// txs := 0
+	// for {
+	// 	txs++
+	// 	txResponse := <-txsChan
+	// 	signedTx := txResponse.Sign()
+	// 	if txs < 3000 {
+	// 		_, err := client.BroadcastEnvelopeAsync(signedTx)
+	// 		fatalError(err)
+	// 		continue
+	// 	}
+	// 	logrus.Infof("Executing %v %v", txResponse.methodName, txResponse.originalIds)
+
+	// 	r, err := client.BroadcastEnvelope(signedTx)
+	// 	if r.Exception != nil {
+	// 		logrus.Fatalf("Exception happened %v executing %v %v", r.Exception, txResponse.methodName, txResponse.originalIds)
+	// 	}
+	// 	fatalError(err)
+	// }
+
+	txsChan := logsReader.LogsLoader()
 	idMap := make(map[int]int)
 
+	// Number of simultaneous txs allowed
 	outstandingTxs := config.Benchmark.OutstandingTxs
 
+	// SentTx that are not received
 	sentTxs := make(map[string]methodAndID)
-	for i := 0; i < outstandingTxs; i++ {
-		txResponse, err := logsReader.LoadNextLog()
-		fatalError(err)
-		signedTx := txResponse.Sign()
-		fatalError(err)
-		_, err = client.BroadcastEnvelopeAsync(signedTx)
+
+	// Dependency graph
+	dependencyGraph := NewDependencies()
+
+	sendTx := func(tx *TxResponse) {
+		signedTx := tx.Sign()
+		_, err := client.BroadcastEnvelopeAsync(signedTx)
 		fatalError(err)
 		sentTxs[string(signedTx.Tx.Hash())] = methodAndID{
-			method: txResponse.methodName,
-			ids:    txResponse.originalIds,
+			method:  tx.methodName,
+			ids:     tx.originalIds,
+			birthID: tx.originalBirthID,
 		}
+	}
+
+	// First txs
+	for i := 0; i < outstandingTxs; i++ {
+		txResponse := <-txsChan
+		dependencyGraph.AddDependency(txResponse)
+		sendTx(txResponse)
 	}
 
 	for {
@@ -57,30 +90,33 @@ func clientEmitter(config *utils.Config, client *def.Client, logsReader *LogsRea
 			txHash := string(tx.TxHash)
 			// Found tx
 			if sentTx, ok := sentTxs[txHash]; ok {
-				if sentTx.method == "createPromoKitty" {
-					idMap[sentTx.ids[0]] = logsReader.extractIDTransfer(tx.Events[1])
-				} else if sentTx.method == "giveBirth" {
-					idMap[sentTx.ids[0]] = logsReader.extractIDTransfer(tx.Events[1])
-				} else if sentTx.method == "breed" {
+				logrus.Infof("Executed: %v %v", sentTx.method, sentTx.ids)
+				freedTxs := dependencyGraph.RemoveDependency(sentTx.ids)
 
-				} else if sentTx.method == "approve" {
-
-				} else if sentTx.method == "transferFrom" {
-
-				} else if sentTx.method == "transfer" {
+				if sentTx.method == "createPromoKitty" || sentTx.method == "giveBirth" {
+					idMap[sentTx.birthID] = logsReader.extractIDTransfer(tx.Events[1])
+					if sentTx.birthID != logsReader.extractIDTransfer(tx.Events[1]) {
+						logrus.Fatal("bad luck: ids differ")
+					}
 				}
+
+				if tx.Exception != nil {
+					logrus.Fatalf("Exception happened %v executing %v %v", tx.Exception, sentTx.method, sentTx.ids)
+				}
+
 				delete(sentTxs, txHash)
-				txResponse, err := logsReader.LoadNextLog()
-				if err != nil {
-					logrus.Infof("Stopping reading txs: %v", err)
-					break
-				}
-				signedTx := txResponse.Sign()
-				_, err = client.BroadcastEnvelopeAsync(signedTx)
-				fatalError(err)
-				sentTxs[string(signedTx.Tx.Hash())] = methodAndID{
-					method: txResponse.methodName,
-					ids:    txResponse.originalIds,
+				if freedTxs != nil {
+					for _, freedTx := range freedTxs {
+						logrus.Infof("Sending blocked tx: %v (%v)", freedTx.methodName, freedTx.originalIds)
+						sendTx(freedTx)
+					}
+				} else {
+					txResponse := <-txsChan
+					shouldWait := dependencyGraph.AddDependency(txResponse)
+					if !shouldWait {
+						logrus.Infof("Sending tx: %v (%v)", txResponse.methodName, txResponse.originalIds)
+						sendTx(txResponse)
+					}
 				}
 			}
 		}
