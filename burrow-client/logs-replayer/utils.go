@@ -88,17 +88,26 @@ func checkFatalError(err error) {
 }
 
 type Node struct {
-	child map[int]*Node
+	child map[int64]*Node
 	tx    *TxResponse
 }
 
 type Dependencies struct {
-	idDep map[int]*Node
+	Length int
+	idDep  map[int64]*Node
+}
+
+func (dp *Dependencies) bfs() {
+	// visited := make(map[*Node]bool)
+	for k := range dp.idDep {
+		fmt.Printf("%v ", k)
+	}
+	fmt.Printf("\n")
 }
 
 func NewDependencies() *Dependencies {
 	return &Dependencies{
-		idDep: make(map[int]*Node),
+		idDep: make(map[int64]*Node),
 	}
 }
 
@@ -106,13 +115,14 @@ func NewDependencies() *Dependencies {
 func (dp *Dependencies) AddDependency(tx *TxResponse) bool {
 	newNode := &Node{
 		tx:    tx,
-		child: make(map[int]*Node),
+		child: make(map[int64]*Node),
 	}
+	dp.Length++
 
 	shouldWait := false
 	for _, dependency := range tx.originalIds {
 		if _, ok := dp.idDep[dependency]; !ok {
-			logrus.Infof("Adding dependency: %v -> %v (%v)", dependency, newNode.tx.methodName, newNode.tx.originalIds)
+			// logrus.Infof("Adding dependency: %v -> %v (%v)", dependency, newNode.tx.methodName, newNode.tx.originalIds)
 			dp.idDep[dependency] = newNode
 		} else {
 			shouldWait = true
@@ -120,7 +130,7 @@ func (dp *Dependencies) AddDependency(tx *TxResponse) bool {
 			// "recursive" insert dependency
 			for {
 				if father.child[dependency] == nil {
-					logrus.Infof("Adding dependency: %v (%v) -> %v (%v)", father, father.tx.methodName, newNode.tx.methodName, newNode.tx.originalIds)
+					// logrus.Infof("Adding dependency: %v (%v) -> %v (%v)", father, father.tx.methodName, newNode.tx.methodName, newNode.tx.originalIds)
 					father.child[dependency] = newNode
 					break
 				}
@@ -131,93 +141,36 @@ func (dp *Dependencies) AddDependency(tx *TxResponse) bool {
 	return shouldWait
 }
 
-func (dp *Dependencies) RemoveDependency(dependencies []int) []*TxResponse {
-	var returnedDep []*TxResponse
+func (dp *Dependencies) canSend(cameFromID int64, blockedTx *Node) bool {
+	for _, otherID := range blockedTx.tx.originalIds {
+		if otherID != cameFromID {
+			// Can send?
+			if dp.idDep[otherID] != blockedTx {
+				return false
+			}
+		}
+	}
+	return true
+}
 
-	if len(dependencies) == 1 {
-		dependency := dependencies[0]
+func (dp *Dependencies) RemoveDependency(dependencies []int64) map[*TxResponse]bool {
+	dp.Length--
+	returnedDep := make(map[*TxResponse]bool)
 
+	for _, dependency := range dependencies {
 		blockedTx := dp.idDep[dependency].child[dependency]
 		// Delete response
 		delete(dp.idDep, dependency)
-		if blockedTx == nil {
-			// No need to execute dependencies
-			return returnedDep
-		}
-		// Should wait for it
-		dp.idDep[dependency] = blockedTx
-		// Can execute next?
-		// Only waiting for 1 dep, good!
-		if len(blockedTx.tx.originalIds) == 1 {
-			// Should send
-			returnedDep = append(returnedDep, blockedTx.tx)
-		} else {
-			// Is a breed (should check other dep)
-			for _, otherID := range blockedTx.tx.originalIds {
-				if otherID != dependency {
-					// Can send?
-					if dp.idDep[otherID] == blockedTx {
-						// Should send
-						returnedDep = append(returnedDep, blockedTx.tx)
-					}
-				}
+		if blockedTx != nil {
+			// Should wait for it
+			dp.idDep[dependency] = blockedTx
+			// Can execute next?
+			if dp.canSend(dependency, blockedTx) {
+				// logrus.Infof("RETURNING %v", blockedTx.tx)
+				returnedDep[blockedTx.tx] = true
 			}
 		}
-	} else if len(dependencies) == 2 {
-		dependency1 := dependencies[0]
-		dependency2 := dependencies[1]
-		// Tx has 2 dependencies
-		blocked1 := dp.idDep[dependency1].child[dependency1]
-		blocked2 := dp.idDep[dependency2].child[dependency2]
-
-		delete(dp.idDep, dependency1)
-		delete(dp.idDep, dependency2)
-		// has dependency in [0]
-		if blocked1 != nil {
-			dp.idDep[dependency1] = blocked1
-			returnedDep = append(returnedDep, blocked1.tx)
-		}
-		if blocked2 != nil {
-			dp.idDep[dependency2] = blocked2
-			// If is not the same should send another tx
-			if blocked1 != blocked2 {
-				returnedDep = append(returnedDep, blocked2.tx)
-			}
-		}
-	} else {
-		dependency1 := dependencies[0]
-		dependency2 := dependencies[1]
-		dependency3 := dependencies[2]
-		// Tx has 3 dependencies
-		blocked1 := dp.idDep[dependency1].child[dependency1]
-		blocked2 := dp.idDep[dependency2].child[dependency2]
-		blocked3 := dp.idDep[dependency3].child[dependency3]
-
-		delete(dp.idDep, dependency1)
-		delete(dp.idDep, dependency2)
-		delete(dp.idDep, dependency3)
-		// has dependency in [0]
-		if blocked1 != nil {
-			dp.idDep[dependency1] = blocked1
-			returnedDep = append(returnedDep, blocked1.tx)
-		}
-		if blocked2 != nil {
-			dp.idDep[dependency2] = blocked2
-			// If is not the same should send another tx
-			if blocked1 != blocked2 {
-				returnedDep = append(returnedDep, blocked2.tx)
-			}
-		}
-		if blocked3 != nil {
-			dp.idDep[dependency3] = blocked3
-			// If is not the same should send another tx
-			if blocked1 != blocked3 && blocked2 != blocked3 {
-				returnedDep = append(returnedDep, blocked3.tx)
-			}
-		}
-
 	}
-
 	return returnedDep
 }
 

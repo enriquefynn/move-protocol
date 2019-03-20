@@ -28,8 +28,8 @@ func clientReplayer(client *def.Client, tx *txs.Envelope, responseCh chan<- int,
 
 type methodAndID struct {
 	method  string
-	ids     []int
-	birthID int
+	ids     []int64
+	birthID int64
 }
 
 func clientEmitter(config *utils.Config, client *def.Client, logsReader *LogsReader, blockChan chan *exec.BlockExecution) {
@@ -54,7 +54,7 @@ func clientEmitter(config *utils.Config, client *def.Client, logsReader *LogsRea
 	// }
 
 	txsChan := logsReader.LogsLoader()
-	idMap := make(map[int]int)
+	idMap := make(map[int64]int64)
 
 	// Number of simultaneous txs allowed
 	outstandingTxs := config.Benchmark.OutstandingTxs
@@ -64,10 +64,13 @@ func clientEmitter(config *utils.Config, client *def.Client, logsReader *LogsRea
 
 	// Dependency graph
 	dependencyGraph := NewDependencies()
+	sentTxsN := 0
 
 	sendTx := func(tx *TxResponse) {
+		logsReader.ChangeIDs(tx, idMap)
 		signedTx := tx.Sign()
 		_, err := client.BroadcastEnvelopeAsync(signedTx)
+		sentTxsN++
 		fatalError(err)
 		sentTxs[string(signedTx.Tx.Hash())] = methodAndID{
 			method:  tx.methodName,
@@ -79,25 +82,29 @@ func clientEmitter(config *utils.Config, client *def.Client, logsReader *LogsRea
 	// First txs
 	for i := 0; i < outstandingTxs; i++ {
 		txResponse := <-txsChan
-		dependencyGraph.AddDependency(txResponse)
-		sendTx(txResponse)
+		shouldWait := dependencyGraph.AddDependency(txResponse)
+		if !shouldWait {
+			sendTx(txResponse)
+		}
 	}
 
 	for {
 		block := <-blockChan
 		logrus.Infof("RECEIVED BLOCK %v", block.Header.Height)
+		logrus.Infof("Dependencies: %v", dependencyGraph.Length)
+		// dependencyGraph.bfs()
 		for _, tx := range block.TxExecutions {
 			txHash := string(tx.TxHash)
 			// Found tx
 			if sentTx, ok := sentTxs[txHash]; ok {
-				logrus.Infof("Executed: %v %v", sentTx.method, sentTx.ids)
+				// logrus.Infof("Executed: %v %v", sentTx.method, sentTx.ids)
 				freedTxs := dependencyGraph.RemoveDependency(sentTx.ids)
 
 				if sentTx.method == "createPromoKitty" || sentTx.method == "giveBirth" {
-					idMap[sentTx.birthID] = logsReader.extractIDTransfer(tx.Events[1])
-					if sentTx.birthID != logsReader.extractIDTransfer(tx.Events[1]) {
-						logrus.Fatal("bad luck: ids differ")
-					}
+					idMap[int64(sentTx.birthID)] = logsReader.extractIDTransfer(tx.Events[1])
+					// if int64(sentTx.birthID) != logsReader.extractIDTransfer(tx.Events[1]) {
+					// 	logrus.Fatal("bad luck: ids differ")
+					// }
 				}
 
 				if tx.Exception != nil {
@@ -105,17 +112,19 @@ func clientEmitter(config *utils.Config, client *def.Client, logsReader *LogsRea
 				}
 
 				delete(sentTxs, txHash)
-				if freedTxs != nil {
-					for _, freedTx := range freedTxs {
-						logrus.Infof("Sending blocked tx: %v (%v)", freedTx.methodName, freedTx.originalIds)
+				if len(freedTxs) != 0 {
+					for freedTx := range freedTxs {
+						// logrus.Infof("Sending blocked tx: %v (%v)", freedTx.methodName, freedTx.originalIds)
 						sendTx(freedTx)
 					}
 				} else {
-					txResponse := <-txsChan
-					shouldWait := dependencyGraph.AddDependency(txResponse)
-					if !shouldWait {
-						logrus.Infof("Sending tx: %v (%v)", txResponse.methodName, txResponse.originalIds)
-						sendTx(txResponse)
+					for len(sentTxs) < outstandingTxs {
+						txResponse := <-txsChan
+						shouldWait := dependencyGraph.AddDependency(txResponse)
+						if !shouldWait {
+							// logrus.Infof("Sending tx: %v (%v)", txResponse.methodName, txResponse.originalIds)
+							sendTx(txResponse)
+						}
 					}
 				}
 			}
