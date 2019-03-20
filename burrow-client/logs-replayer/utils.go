@@ -13,7 +13,8 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-func listenBlockHeaders(client *def.Client) {
+func listenBlockHeaders(client *def.Client, logs *Log) {
+	defer func() { logs.Close() }()
 	end := rpcevents.StreamBound()
 
 	request := &rpcevents.BlocksRequest{
@@ -27,11 +28,11 @@ func listenBlockHeaders(client *def.Client) {
 	startTime := time.Now()
 	totalTxs := int64(0)
 	commence := false
+	closing := 0
 	for {
 		resp, err := signedHeaders.Recv()
 		checkFatalError(err)
 		if !commence && resp.SignedHeader.NumTxs > 0 {
-			logrus.Infof("Commence at: %v %v", resp.SignedHeader.Height, resp.SignedHeader.Time)
 			commence = true
 			startTime = resp.SignedHeader.Time
 		}
@@ -39,8 +40,15 @@ func listenBlockHeaders(client *def.Client) {
 			elapsedTime := resp.SignedHeader.Time.Sub(startTime)
 			startTime = resp.SignedHeader.Time
 			totalTxs += resp.SignedHeader.NumTxs
+			logs.Log("tput", "%v %v\n", totalTxs, startTime)
 			logrus.Infof("[SRV] Txs: %v, elapsed time: %v", totalTxs, elapsedTime)
 			logrus.Infof("[SRV] Tx/s: %v", float64(resp.SignedHeader.NumTxs)/elapsedTime.Seconds())
+			if resp.SignedHeader.NumTxs == 0 {
+				closing++
+				if closing == 3 {
+					break
+				}
+			}
 		}
 	}
 }

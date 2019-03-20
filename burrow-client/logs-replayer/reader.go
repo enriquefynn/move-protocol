@@ -53,7 +53,7 @@ func CreateLogsReader(chainID string, path string, abiPath string) *LogsReader {
 		Accounts: Accounts{
 			chainID:    chainID,
 			accountMap: make(map[common.Address]*SeqAccount),
-			allowedMap: make(map[crypto.Address]map[int64]crypto.Address),
+			allowedMap: make(map[crypto.Address]map[int64]common.Address),
 			tokenMap:   make(map[int64]common.Address),
 		},
 	}
@@ -168,6 +168,7 @@ func (lr *LogsReader) ChangeIDs(txResponse *TxResponse, idMap map[int64]int64) {
 }
 
 func debugf(format string, a ...interface{}) {
+	// Dirty hack
 	// logrus.Infof(format, a...)
 }
 
@@ -187,8 +188,9 @@ func (lr *LogsReader) LogsLoader() chan *TxResponse {
 			}
 
 			line, err := lr.logsReader.ReadString('\n')
-			if err != nil {
+			if len(line) == 0 || err != nil {
 				close(txsChan)
+				break
 			}
 			splitLine := strings.Split(line, " ")
 			// 0      1           2            3         4          5          6         7        8        9          10
@@ -209,9 +211,6 @@ func (lr *LogsReader) LogsLoader() chan *TxResponse {
 					txResponse.methodName = "createPromoKitty"
 					txResponse.bigIntArgument = genes
 					txResponse.addressArgument = []common.Address{common.BytesToAddress(simulatedOwner.account.GetAddress().Bytes())}
-					// txInput, err := lr.abi.Methods["createPromoKitty"].Inputs.Pack(genes, simulatedOwner.account.GetAddress())
-					// fatalError(err)
-					// txResponse.tx.Data = append(lr.abi.Methods["createPromoKitty"].Id(), txInput...)
 					txResponse.originalIds = []int64{kittyID}
 					txResponse.originalBirthID = kittyID
 				} else {
@@ -220,9 +219,6 @@ func (lr *LogsReader) LogsLoader() chan *TxResponse {
 					debugf("giveBirth %v from: %v and %v owner: %v", kittyID, matronID, sireID, simulatedOwner.account.GetAddress())
 					// Should call giveBirth(uint256 _matronId)
 					txResponse.methodName = "giveBirth"
-					// txInput, err := lr.abi.Methods["giveBirth"].Inputs.Pack(big.NewInt(matronID))
-					// fatalError(err)
-					// txResponse.tx.Data = append(lr.abi.Methods["giveBirth"].Id(), txInput...)
 					txResponse.originalIds = []int64{matronID, sireID, kittyID}
 					txResponse.originalBirthID = kittyID
 				}
@@ -257,13 +253,9 @@ func (lr *LogsReader) LogsLoader() chan *TxResponse {
 					debugf("approveSiring %v", sireID)
 					approveSiringTx.methodName = "approveSiring"
 					approveSiringTx.addressArgument = []common.Address{common.BytesToAddress(simulatedOwner.account.GetAddress().Bytes())}
-					// txInput, err := lr.abi.Methods["approveSiring"].Inputs.Pack(simulatedOwner.account.GetAddress(), big.NewInt(sireID))
-					// fatalError(err)
-					// approveSiringTx.tx.Data = append(lr.abi.Methods["approveSiring"].Id(), txInput...)
 					approveSiringTx.tx.Input = &payload.TxInput{
 						Address: simulatedSireOwner.account.GetAddress(),
 						Amount:  1,
-						// Sequence: fromAcc.sequence,
 					}
 					approveSiringTx.originalIds = []int64{sireID}
 					txsChan <- &approveSiringTx
@@ -271,9 +263,6 @@ func (lr *LogsReader) LogsLoader() chan *TxResponse {
 				// Should call breed(uint256 _matronId, uint256 _sireId)
 				debugf("breed %v %v", matronID, sireID)
 				txResponse.methodName = "breed"
-				// txInput, err := lr.abi.Methods["breed"].Inputs.Pack(big.NewInt(matronID), big.NewInt(sireID))
-				// txResponse.tx.Data = append(lr.abi.Methods["breed"].Id(), txInput...)
-				// fatalError(err)
 				txResponse.signer = simulatedOwner
 				txResponse.originalIds = []int64{matronID, sireID}
 
@@ -288,25 +277,19 @@ func (lr *LogsReader) LogsLoader() chan *TxResponse {
 				tokenID, _ := strconv.ParseInt(splitLine[6], 10, 64)
 				if splitLine[0] == "Approval" {
 					txResponse.signer = simulatedFrom
-					lr.addAllowed(simulatedFrom.account.GetAddress(), simulatedTo.account.GetAddress(), tokenID)
-					debugf("approve %v", tokenID)
+					lr.addAllowed(simulatedFrom.account.GetAddress(), to, tokenID)
+					debugf("approve from: %v to: %v token: %v", simulatedFrom.account.GetAddress(), simulatedTo.account.GetAddress(), tokenID)
 					txResponse.methodName = "approve"
 					txResponse.addressArgument = []common.Address{common.BytesToAddress(simulatedTo.account.GetAddress().Bytes())}
-					// txInput, err := lr.abi.Methods["approve"].Inputs.Pack(simulatedTo.account.GetAddress(), big.NewInt(tokenID))
-					// txResponse.tx.Data = append(lr.abi.Methods["approve"].Id(), txInput...)
-					// fatalError(err)
 				} else {
 					// Should call transferFrom(address _from, address _to, uint256 _tokenId)
 					if lr.isAllowed(simulatedFrom.account.GetAddress(), tokenID) {
-						fromAllowed := lr.allowedMap[simulatedFrom.account.GetAddress()][tokenID].Bytes()
-						txResponse.signer = lr.getOrCreateAccount(common.BytesToAddress(fromAllowed))
-						debugf("transferFrom %v", tokenID)
+						fromAllowed := lr.allowedMap[simulatedFrom.account.GetAddress()][tokenID]
+						txResponse.signer = lr.getOrCreateAccount(fromAllowed)
+						debugf("transferFrom sender: %v from: %v to: %v token: %v", txResponse.signer.account.GetAddress(), simulatedFrom.account.GetAddress(), simulatedTo.account.GetAddress(), tokenID)
 						txResponse.methodName = "transferFrom"
 						txResponse.addressArgument = []common.Address{common.BytesToAddress(simulatedFrom.account.GetAddress().Bytes()),
 							common.BytesToAddress(simulatedTo.account.GetAddress().Bytes())}
-						// txInput, err := lr.abi.Methods["transferFrom"].Inputs.Pack(simulatedFrom.account.GetAddress(), simulatedTo.account.GetAddress(), big.NewInt(tokenID))
-						// fatalError(err)
-						// txResponse.tx.Data = append(lr.abi.Methods["transferFrom"].Id(), txInput...)
 						lr.deleteAllowed(simulatedTo.account.GetAddress(), tokenID)
 						// Should call transfer(address _to, uint256 _tokenId))
 					} else {
@@ -314,9 +297,6 @@ func (lr *LogsReader) LogsLoader() chan *TxResponse {
 						debugf("transfer %v -> %v %v", simulatedFrom.account.GetAddress(), simulatedTo.account.GetAddress(), tokenID)
 						txResponse.methodName = "transfer"
 						txResponse.addressArgument = []common.Address{common.BytesToAddress(simulatedTo.account.GetAddress().Bytes())}
-						// txInput, err := lr.abi.Methods["transfer"].Inputs.Pack(simulatedTo.account.GetAddress(), big.NewInt(tokenID))
-						// fatalError(err)
-						// txResponse.tx.Data = append(lr.abi.Methods["transfer"].Id(), txInput...)
 					}
 					lr.tokenMap[tokenID] = to
 				}
@@ -325,19 +305,12 @@ func (lr *LogsReader) LogsLoader() chan *TxResponse {
 				logrus.Fatalf("Error, unknown event %v", splitLine[0])
 			}
 
-			// txPayload := payload.Payload(tx)
-			// fromAcc.sequence++
 			txResponse.tx.Input = &payload.TxInput{
 				Address: txResponse.signer.account.GetAddress(),
 				Amount:  1,
 				// Sequence: fromAcc.sequence,
 			}
-
-			// env := txs.Enclose(lr.chainID, txPayload)
-			// err = env.Sign(fromAcc.account)
-
 			txsChan <- &txResponse
-			// return &txResponse, err
 		}
 	}()
 	return txsChan
@@ -368,7 +341,7 @@ type Accounts struct {
 	chainID       string
 	accountMap    map[common.Address]*SeqAccount
 	lastAccountID int
-	allowedMap    map[crypto.Address]map[int64]crypto.Address
+	allowedMap    map[crypto.Address]map[int64]common.Address
 	tokenMap      map[int64]common.Address
 }
 
@@ -386,9 +359,9 @@ func (ac *Accounts) getOrCreateAccount(addr common.Address) *SeqAccount {
 
 }
 
-func (ac *Accounts) addAllowed(from, to crypto.Address, tokenID int64) {
+func (ac *Accounts) addAllowed(from crypto.Address, to common.Address, tokenID int64) {
 	if _, ok := ac.allowedMap[from]; !ok {
-		ac.allowedMap[from] = make(map[int64]crypto.Address)
+		ac.allowedMap[from] = make(map[int64]common.Address)
 	}
 	ac.allowedMap[from][tokenID] = to
 }

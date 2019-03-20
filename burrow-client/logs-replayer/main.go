@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"io/ioutil"
 	"os"
 	"time"
@@ -9,22 +10,11 @@ import (
 
 	"github.com/hyperledger/burrow/acm"
 	"github.com/hyperledger/burrow/deploy/def"
-	"github.com/hyperledger/burrow/txs"
 
 	"github.com/enriquefynn/sharding-runner/burrow-client/utils"
 	"github.com/sirupsen/logrus"
 	yaml "gopkg.in/yaml.v2"
 )
-
-func clientReplayer(client *def.Client, tx *txs.Envelope, responseCh chan<- int, blockChan <-chan *exec.BlockExecution) {
-	resp, err := client.BroadcastEnvelope(tx)
-	fatalError(err)
-	// logrus.Infof("Resp: %v", tx, resp)
-	if resp.Exception != nil {
-		logrus.Fatalf("Exception in tx: %v : %v", tx, resp.Exception)
-	}
-	// logrus.Infof("Resp: %v", resp.Events[1].Log.Data)
-}
 
 type methodAndID struct {
 	method  string
@@ -53,7 +43,9 @@ func clientEmitter(config *utils.Config, client *def.Client, logsReader *LogsRea
 	// 	fatalError(err)
 	// }
 
+	// Txs streamer
 	txsChan := logsReader.LogsLoader()
+	// Mapping for kittens ids
 	idMap := make(map[int64]int64)
 
 	// Number of simultaneous txs allowed
@@ -64,24 +56,38 @@ func clientEmitter(config *utils.Config, client *def.Client, logsReader *LogsRea
 
 	// Dependency graph
 	dependencyGraph := NewDependencies()
-	sentTxsN := 0
 
+	pause := false
 	sendTx := func(tx *TxResponse) {
-		logsReader.ChangeIDs(tx, idMap)
-		signedTx := tx.Sign()
-		_, err := client.BroadcastEnvelopeAsync(signedTx)
-		sentTxsN++
-		fatalError(err)
-		sentTxs[string(signedTx.Tx.Hash())] = methodAndID{
-			method:  tx.methodName,
-			ids:     tx.originalIds,
-			birthID: tx.originalBirthID,
+		if !pause {
+			logsReader.ChangeIDs(tx, idMap)
+			signedTx := tx.Sign()
+			_, err := client.BroadcastEnvelopeAsync(signedTx)
+			fatalError(err)
+			sentTxs[string(signedTx.Tx.Hash())] = methodAndID{
+				method:  tx.methodName,
+				ids:     tx.originalIds,
+				birthID: tx.originalBirthID,
+			}
 		}
 	}
 
+	go func() {
+		scanner := bufio.NewScanner(os.Stdin)
+		scanner.Scan()
+		if scanner.Text() == " " {
+			logrus.Warn("PAUSING")
+			pause = !pause
+		}
+	}()
+
 	// First txs
 	for i := 0; i < outstandingTxs; i++ {
-		txResponse := <-txsChan
+		txResponse, chOpen := <-txsChan
+		if !chOpen {
+			break
+		}
+		// logrus.Infof("SENDING: %v", txResponse.methodName)
 		shouldWait := dependencyGraph.AddDependency(txResponse)
 		if !shouldWait {
 			sendTx(txResponse)
@@ -89,6 +95,10 @@ func clientEmitter(config *utils.Config, client *def.Client, logsReader *LogsRea
 	}
 
 	for {
+		sentTxsThisRound := 0
+		if len(sentTxs) == 0 {
+			break
+		}
 		block := <-blockChan
 		logrus.Infof("RECEIVED BLOCK %v", block.Header.Height)
 		logrus.Infof("Dependencies: %v", dependencyGraph.Length)
@@ -97,18 +107,20 @@ func clientEmitter(config *utils.Config, client *def.Client, logsReader *LogsRea
 			txHash := string(tx.TxHash)
 			// Found tx
 			if sentTx, ok := sentTxs[txHash]; ok {
+				if tx.Exception != nil {
+					logrus.Fatalf("Exception happened %v executing %v %v", tx.Exception, sentTx.method, sentTx.ids)
+				}
+
 				// logrus.Infof("Executed: %v %v", sentTx.method, sentTx.ids)
 				freedTxs := dependencyGraph.RemoveDependency(sentTx.ids)
 
 				if sentTx.method == "createPromoKitty" || sentTx.method == "giveBirth" {
+					// logrus.Warnf("Used Gas: %v", tx.Result.GasUsed)
+					// logrus.Warnf("Genes: %v", tx.Events[0].Log.Data)
 					idMap[int64(sentTx.birthID)] = logsReader.extractIDTransfer(tx.Events[1])
 					// if int64(sentTx.birthID) != logsReader.extractIDTransfer(tx.Events[1]) {
 					// 	logrus.Fatal("bad luck: ids differ")
 					// }
-				}
-
-				if tx.Exception != nil {
-					logrus.Fatalf("Exception happened %v executing %v %v", tx.Exception, sentTx.method, sentTx.ids)
 				}
 
 				delete(sentTxs, txHash)
@@ -116,19 +128,28 @@ func clientEmitter(config *utils.Config, client *def.Client, logsReader *LogsRea
 					for freedTx := range freedTxs {
 						// logrus.Infof("Sending blocked tx: %v (%v)", freedTx.methodName, freedTx.originalIds)
 						sendTx(freedTx)
-					}
-				} else {
-					for len(sentTxs) < outstandingTxs {
-						txResponse := <-txsChan
-						shouldWait := dependencyGraph.AddDependency(txResponse)
-						if !shouldWait {
-							// logrus.Infof("Sending tx: %v (%v)", txResponse.methodName, txResponse.originalIds)
-							sendTx(txResponse)
-						}
+						sentTxsThisRound++
 					}
 				}
 			}
 		}
+		added := 0
+		for len(sentTxs) < outstandingTxs {
+			added++
+			txResponse, chOpen := <-txsChan
+			if !chOpen {
+				logrus.Warnf("No more txs in channel")
+				break
+			}
+			shouldWait := dependencyGraph.AddDependency(txResponse)
+			if !shouldWait {
+				// logrus.Infof("Sending tx: %v (%v)", txResponse.methodName, txResponse.originalIds)
+				sendTx(txResponse)
+				sentTxsThisRound++
+			}
+		}
+		logrus.Infof("Added: %v SentTxs: %v", added, len(sentTxs))
+		logrus.Infof("Sent this round: %v", sentTxsThisRound)
 	}
 }
 
@@ -138,6 +159,10 @@ func main() {
 	checkFatalError(err)
 	err = yaml.Unmarshal(configFile, &config)
 	checkFatalError(err)
+
+	logs, err := NewLog(config.Logs.TputPath)
+	checkFatalError(err)
+
 	// Chain id: 1
 	logsReader := CreateLogsReader(config.Benchmark.ChainID, config.Contracts.ReplayTransactionsPath, config.Contracts.CKABI)
 
@@ -158,7 +183,7 @@ func main() {
 
 	blockChan := make(chan *exec.BlockExecution)
 
-	go listenBlockHeaders(client)
+	go listenBlockHeaders(client, logs)
 	go listenBlocks(client, blockChan)
 
 	clientEmitter(&config, client, logsReader, blockChan)
