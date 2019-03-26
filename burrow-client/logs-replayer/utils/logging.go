@@ -1,20 +1,30 @@
-package main
+package utils
 
 import (
 	"bufio"
 	"fmt"
 	"os"
+
+	"github.com/sirupsen/logrus"
 )
 
+func fatalError(err error) {
+	if err != nil {
+		logrus.Fatalf("Error: %v", err)
+	}
+}
+
 type Log struct {
-	logs map[string]struct {
+	logDir string
+	logs   map[string]struct {
 		file   *os.File
 		writer *bufio.Writer
 	}
 }
 
-func NewLog() (*Log, error) {
+func NewLog(logDir string) (*Log, error) {
 	log := &Log{
+		logDir: logDir,
 		logs: make(map[string]struct {
 			file   *os.File
 			writer *bufio.Writer
@@ -26,7 +36,7 @@ func NewLog() (*Log, error) {
 func (l *Log) Log(logName, format string, args ...interface{}) {
 	log, ok := l.logs[logName]
 	if !ok {
-		file, err := os.Create(logName + ".txt")
+		file, err := os.Create(l.logDir + logName + ".txt")
 		if err != nil {
 			fatalError(err)
 		}
@@ -39,12 +49,17 @@ func (l *Log) Log(logName, format string, args ...interface{}) {
 		}
 		log = l.logs[logName]
 	}
-	fmt.Fprintf(log.writer, "args", args...)
+	fmt.Fprintf(log.writer, format, args...)
 }
 
 func (l *Log) Close() {
-	for k, log := range l.logs {
+	for _, log := range l.logs {
 		log.writer.Flush()
 		log.file.Close()
+	}
+}
+func (l *Log) Flush() {
+	for _, log := range l.logs {
+		log.writer.Flush()
 	}
 }

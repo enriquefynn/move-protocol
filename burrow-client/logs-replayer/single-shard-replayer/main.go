@@ -11,10 +11,18 @@ import (
 	"github.com/hyperledger/burrow/acm"
 	"github.com/hyperledger/burrow/deploy/def"
 
+	"github.com/enriquefynn/sharding-runner/burrow-client/logs-replayer/logsreader"
+	lutils "github.com/enriquefynn/sharding-runner/burrow-client/logs-replayer/utils"
 	"github.com/enriquefynn/sharding-runner/burrow-client/utils"
 	"github.com/sirupsen/logrus"
 	yaml "gopkg.in/yaml.v2"
 )
+
+func checkFatalError(err error) {
+	if err != nil {
+		logrus.Fatalf("Error: %v", err)
+	}
+}
 
 type methodAndID struct {
 	method  string
@@ -22,7 +30,7 @@ type methodAndID struct {
 	birthID int64
 }
 
-func clientEmitter(config *utils.Config, client *def.Client, logsReader *LogsReader, blockChan chan *exec.BlockExecution) {
+func clientEmitter(config *utils.Config, client *def.Client, logsReader *logsreader.LogsReader, blockChan chan *exec.BlockExecution) {
 	// txsChan := logsReader.LogsLoader()
 	// txs := 0
 	// for {
@@ -55,19 +63,19 @@ func clientEmitter(config *utils.Config, client *def.Client, logsReader *LogsRea
 	sentTxs := make(map[string]methodAndID)
 
 	// Dependency graph
-	dependencyGraph := NewDependencies()
+	dependencyGraph := lutils.NewDependencies()
 
 	pause := false
-	sendTx := func(tx *TxResponse) {
+	sendTx := func(tx *logsreader.TxResponse) {
 		if !pause {
 			logsReader.ChangeIDs(tx, idMap)
 			signedTx := tx.Sign()
 			_, err := client.BroadcastEnvelopeAsync(signedTx)
-			fatalError(err)
+			checkFatalError(err)
 			sentTxs[string(signedTx.Tx.Hash())] = methodAndID{
-				method:  tx.methodName,
-				ids:     tx.originalIds,
-				birthID: tx.originalBirthID,
+				method:  tx.MethodName,
+				ids:     tx.OriginalIds,
+				birthID: tx.OriginalBirthID,
 			}
 		}
 	}
@@ -103,10 +111,12 @@ func clientEmitter(config *utils.Config, client *def.Client, logsReader *LogsRea
 		logrus.Infof("RECEIVED BLOCK %v", block.Header.Height)
 		logrus.Infof("Dependencies: %v", dependencyGraph.Length)
 		// dependencyGraph.bfs()
+		executed := 0
 		for _, tx := range block.TxExecutions {
 			txHash := string(tx.TxHash)
 			// Found tx
 			if sentTx, ok := sentTxs[txHash]; ok {
+				executed++
 				if tx.Exception != nil {
 					logrus.Fatalf("Exception happened %v executing %v %v", tx.Exception, sentTx.method, sentTx.ids)
 				}
@@ -117,7 +127,7 @@ func clientEmitter(config *utils.Config, client *def.Client, logsReader *LogsRea
 				if sentTx.method == "createPromoKitty" || sentTx.method == "giveBirth" {
 					// logrus.Warnf("Used Gas: %v", tx.Result.GasUsed)
 					// logrus.Warnf("Genes: %v", tx.Events[0].Log.Data)
-					idMap[int64(sentTx.birthID)] = logsReader.extractIDTransfer(tx.Events[1])
+					idMap[int64(sentTx.birthID)] = logsReader.ExtractIDTransfer(tx.Events[1])
 					// if int64(sentTx.birthID) != logsReader.extractIDTransfer(tx.Events[1]) {
 					// 	logrus.Fatal("bad luck: ids differ")
 					// }
@@ -148,8 +158,9 @@ func clientEmitter(config *utils.Config, client *def.Client, logsReader *LogsRea
 				sentTxsThisRound++
 			}
 		}
-		logrus.Infof("Added: %v SentTxs: %v", added, len(sentTxs))
-		logrus.Infof("Sent this round: %v", sentTxsThisRound)
+		logrus.Infof("Last sentTxs %v, sent this round %v, received %v txs executed %v", len(sentTxs), sentTxsThisRound, len(block.TxExecutions), executed)
+		// logrus.Infof("Added: %v SentTxs: %v", added, len(sentTxs))
+		// logrus.Infof("Sent this round: %v", sentTxsThisRound)
 	}
 }
 
@@ -160,22 +171,22 @@ func main() {
 	err = yaml.Unmarshal(configFile, &config)
 	checkFatalError(err)
 
-	logs, err := NewLog(config.Logs.TputPath)
+	logs, err := lutils.NewLog(config.Logs.Dir)
 	checkFatalError(err)
 
 	// Chain id: 1
-	logsReader := CreateLogsReader(config.Benchmark.ChainID, config.Contracts.ReplayTransactionsPath, config.Contracts.CKABI)
+	logsReader := logsreader.CreateLogsReader(config.Benchmark.ChainID, config.Contracts.ReplayTransactionsPath, config.Contracts.CKABI)
 
 	defaultAccount := acm.SigningAccounts([]*acm.PrivateAccount{acm.GeneratePrivateAccountFromSecret("0")})
 	client := def.NewClientWithLocalSigning(config.Benchmark.Address, time.Duration(config.Benchmark.Timeout)*time.Second, defaultAccount)
 
 	// Deploy Genes contract
-	address, err := createContract(&config, logsReader, client, config.Contracts.GenePath)
+	address, err := lutils.CreateContract(&config, logsReader, client, config.Contracts.GenePath)
 	checkFatalError(err)
 	logrus.Infof("Deployed GeneScience at: %v", address)
 
 	// Deploy CK contract
-	address, err = createContract(&config, logsReader, client, config.Contracts.Path, address)
+	address, err = lutils.CreateContract(&config, logsReader, client, config.Contracts.Path, address)
 	logsReader.Advance(2)
 	checkFatalError(err)
 	logrus.Infof("Deployed CK at: %v", address)
@@ -183,8 +194,8 @@ func main() {
 
 	blockChan := make(chan *exec.BlockExecution)
 
-	go listenBlockHeaders(client, logs)
-	go listenBlocks(client, blockChan)
+	go lutils.ListenBlockHeaders(client, logs)
+	go lutils.ListenBlocks(client, blockChan)
 
 	clientEmitter(&config, client, logsReader, blockChan)
 }

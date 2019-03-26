@@ -4,7 +4,7 @@ contracts:
   genePath: "../../contracts/cryptoKitties/Simplified/binaries/GeneScience.bin"
   ckABI   : "../../contracts/cryptoKitties/Simplified/binaries/CryptoKitties.abi"
   geneABI : "../../contracts/cryptoKitties/Simplified/binaries/GeneScience.abi"
-  replayTransactionsPath: "./logs_from_4605167_to_7321785.txt"
+  replayTransactionsPath: "./data/logs_from_4605167_to_7321785.txt"
   # replayTransactionsPath: "./simple.txt"
   # replayTransactionsPath: "../../go-ethereum-client/tx-extractor/read/txs_read.txt"
   # contractsFilesPath: "../../go-ethereum-client/tx-extractor/read/contracts"
@@ -19,3 +19,6 @@ benchmark:
   timeout: 10
   address: "127.0.0.1:20002"
   outstandingTxs: 300
+
+logs:
+  dir: "./data/logs/"

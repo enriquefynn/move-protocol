@@ -1,10 +1,10 @@
-package main
+package utils
 
 import (
 	"context"
 	"fmt"
-	"time"
 
+	"github.com/enriquefynn/sharding-runner/burrow-client/logs-replayer/logsreader"
 	"github.com/enriquefynn/sharding-runner/burrow-client/utils"
 	"github.com/hyperledger/burrow/crypto"
 	"github.com/hyperledger/burrow/deploy/def"
@@ -13,7 +13,7 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-func listenBlockHeaders(client *def.Client, logs *Log) {
+func ListenBlockHeaders(client *def.Client, logs *Log) {
 	defer func() { logs.Close() }()
 	end := rpcevents.StreamBound()
 
@@ -23,10 +23,7 @@ func listenBlockHeaders(client *def.Client, logs *Log) {
 	clientEvents, err := client.Query()
 	signedHeaders, err := clientEvents.ListSignedHeaders(context.Background(), request)
 	checkFatalError(err)
-	// firstBlock, err := signedHeaders.Recv()
-	// checkFatalError(err)
-	startTime := time.Now()
-	totalTxs := int64(0)
+
 	commence := false
 	closing := 0
 	for {
@@ -34,15 +31,10 @@ func listenBlockHeaders(client *def.Client, logs *Log) {
 		checkFatalError(err)
 		if !commence && resp.SignedHeader.NumTxs > 0 {
 			commence = true
-			startTime = resp.SignedHeader.Time
 		}
 		if commence {
-			elapsedTime := resp.SignedHeader.Time.Sub(startTime)
-			startTime = resp.SignedHeader.Time
-			totalTxs += resp.SignedHeader.NumTxs
-			logs.Log("tput", "%v %v\n", totalTxs, startTime)
-			logrus.Infof("[SRV] Txs: %v, elapsed time: %v", totalTxs, elapsedTime)
-			logrus.Infof("[SRV] Tx/s: %v", float64(resp.SignedHeader.NumTxs)/elapsedTime.Seconds())
+			logs.Log("tput", "%d %d\n", resp.SignedHeader.TotalTxs, resp.SignedHeader.Time.UnixNano())
+			logs.Flush()
 			if resp.SignedHeader.NumTxs == 0 {
 				closing++
 				if closing == 3 {
@@ -53,7 +45,7 @@ func listenBlockHeaders(client *def.Client, logs *Log) {
 	}
 }
 
-func listenBlocks(client *def.Client, blockCh chan<- *exec.BlockExecution) {
+func ListenBlocks(client *def.Client, blockCh chan<- *exec.BlockExecution) {
 	end := rpcevents.StreamBound()
 
 	request := &rpcevents.BlocksRequest{
@@ -68,7 +60,7 @@ func listenBlocks(client *def.Client, blockCh chan<- *exec.BlockExecution) {
 	})
 }
 
-func createContract(config *utils.Config, accounts *LogsReader, client *def.Client, path string, args ...interface{}) (*crypto.Address, error) {
+func CreateContract(config *utils.Config, accounts *logsreader.LogsReader, client *def.Client, path string, args ...interface{}) (*crypto.Address, error) {
 	contractEnv, err := accounts.CreateContract(path, args...)
 	if err != nil {
 		return nil, err
@@ -97,7 +89,7 @@ func checkFatalError(err error) {
 
 type Node struct {
 	child map[int64]*Node
-	tx    *TxResponse
+	tx    *logsreader.TxResponse
 }
 
 type Dependencies struct {
@@ -120,7 +112,7 @@ func NewDependencies() *Dependencies {
 }
 
 // AddDependency add a dependency and return if is allowed to send tx
-func (dp *Dependencies) AddDependency(tx *TxResponse) bool {
+func (dp *Dependencies) AddDependency(tx *logsreader.TxResponse) bool {
 	newNode := &Node{
 		tx:    tx,
 		child: make(map[int64]*Node),
@@ -128,7 +120,7 @@ func (dp *Dependencies) AddDependency(tx *TxResponse) bool {
 	dp.Length++
 
 	shouldWait := false
-	for _, dependency := range tx.originalIds {
+	for _, dependency := range tx.OriginalIds {
 		if _, ok := dp.idDep[dependency]; !ok {
 			// logrus.Infof("Adding dependency: %v -> %v (%v)", dependency, newNode.tx.methodName, newNode.tx.originalIds)
 			dp.idDep[dependency] = newNode
@@ -150,7 +142,7 @@ func (dp *Dependencies) AddDependency(tx *TxResponse) bool {
 }
 
 func (dp *Dependencies) canSend(cameFromID int64, blockedTx *Node) bool {
-	for _, otherID := range blockedTx.tx.originalIds {
+	for _, otherID := range blockedTx.tx.OriginalIds {
 		if otherID != cameFromID {
 			// Can send?
 			if dp.idDep[otherID] != blockedTx {
@@ -161,9 +153,9 @@ func (dp *Dependencies) canSend(cameFromID int64, blockedTx *Node) bool {
 	return true
 }
 
-func (dp *Dependencies) RemoveDependency(dependencies []int64) map[*TxResponse]bool {
+func (dp *Dependencies) RemoveDependency(dependencies []int64) map[*logsreader.TxResponse]bool {
 	dp.Length--
-	returnedDep := make(map[*TxResponse]bool)
+	returnedDep := make(map[*logsreader.TxResponse]bool)
 
 	for _, dependency := range dependencies {
 		blockedTx := dp.idDep[dependency].child[dependency]
@@ -180,17 +172,4 @@ func (dp *Dependencies) RemoveDependency(dependencies []int64) map[*TxResponse]b
 		}
 	}
 	return returnedDep
-}
-
-// TRYING QUEUE method
-type txQueue struct {
-	queue []*TxResponse
-}
-
-func (tq *txQueue) Add(tx *TxResponse) {
-
-}
-
-func (tq *txQueue) Remove() {
-
 }

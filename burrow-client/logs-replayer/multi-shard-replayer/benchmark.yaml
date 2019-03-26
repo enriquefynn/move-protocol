@@ -1,0 +1,25 @@
+contracts:
+  deploy  : true
+  path    : "../../contracts/cryptoKitties/Scalable/binaries/Breeder.bin"
+  genePath: "../../contracts/cryptoKitties/Scalable/binaries/GeneScience.bin"
+  ckABI   : "../../contracts/cryptoKitties/Scalable/binaries/Breeder.abi"
+  kittyABI: "../../contracts/cryptoKitties/Scalable/binaries/Kitty.abi"
+  geneABI : "../../contracts/cryptoKitties/Scalable/binaries/GeneScience.abi"
+  replayTransactionsPath: "./data/logs_from_4605167_to_7321785.txt"
+  # replayTransactionsPath: "./simple.txt"
+  # replayTransactionsPath: "../../go-ethereum-client/tx-extractor/read/txs_read.txt"
+  # contractsFilesPath: "../../go-ethereum-client/tx-extractor/read/contracts"
+  contractsFilesPath: "../../go-ethereum-client/tx-extractor/read/contractsModified"
+  contractMappingPath: "../../go-ethereum-client/tx-extractor/read/contractMapping.txt"
+  # path: "../binaries/generic_coin.bin/Coin.bin"
+  # address: "0000000000000000000000000000000000000000"
+
+benchmark:
+  chainID: "1"
+  clients: 1
+  timeout: 10
+  address: "127.0.0.1:20002"
+  outstandingTxs: 300
+
+logs:
+  dir: "./data/logs/"

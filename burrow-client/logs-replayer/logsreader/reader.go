@@ -1,4 +1,4 @@
-package main
+package logsreader
 
 import (
 	"bufio"
@@ -32,17 +32,24 @@ type LogsReader struct {
 	logsFile     *os.File
 	logsReader   *bufio.Reader
 	abi          abi.ABI
+	kittyABI     abi.ABI
 	contractAddr *crypto.Address
 	Accounts
 }
 
-func CreateLogsReader(chainID string, path string, abiPath string) *LogsReader {
+func CreateLogsReader(chainID string, path string, abiPath string, kittyABIPath string) *LogsReader {
 	file, err := os.Open(path)
 	fatalError(err)
 	// CK ABI
 	ckABIjson, err := os.Open(abiPath)
 	fatalError(err)
 	ckABI, err := abi.JSON(ckABIjson)
+	fatalError(err)
+
+	kittyABIjson, err := os.Open(kittyABIPath)
+	fatalError(err)
+	kittyABI, err := abi.JSON(kittyABIjson)
+	fatalError(err)
 
 	reader := bufio.NewReader(file)
 	return &LogsReader{
@@ -50,6 +57,7 @@ func CreateLogsReader(chainID string, path string, abiPath string) *LogsReader {
 		logsFile:   file,
 		logsReader: reader,
 		abi:        ckABI,
+		kittyABI:   kittyABI,
 		Accounts: Accounts{
 			chainID:    chainID,
 			accountMap: make(map[common.Address]*SeqAccount),
@@ -70,100 +78,100 @@ func (lr *LogsReader) Advance(n int) {
 }
 
 type TxResponse struct {
-	chainID         string
-	tx              *payload.CallTx
-	signer          *SeqAccount
-	methodName      string
-	originalIds     []int64
-	originalBirthID int64
-	addressArgument []common.Address
-	bigIntArgument  *big.Int
+	ChainID         string
+	Tx              *payload.CallTx
+	Signer          *SeqAccount
+	MethodName      string
+	OriginalIds     []int64
+	OriginalBirthID int64
+	AddressArgument []common.Address
+	BigIntArgument  *big.Int
 }
 
 func (tr *TxResponse) Sign() *txs.Envelope {
-	txPayload := payload.Payload(tr.tx)
-	tr.signer.sequence++
-	tr.tx.Input.Sequence = tr.signer.sequence
-	env := txs.Enclose(tr.chainID, txPayload)
-	env.Sign(tr.signer.account)
+	txPayload := payload.Payload(tr.Tx)
+	tr.Signer.sequence++
+	tr.Tx.Input.Sequence = tr.Signer.sequence
+	env := txs.Enclose(tr.ChainID, txPayload)
+	env.Sign(tr.Signer.account)
 	return env
 }
 
 func (lr *LogsReader) ChangeIDs(txResponse *TxResponse, idMap map[int64]int64) {
-	txResponse.tx.Data = lr.abi.Methods[txResponse.methodName].Id()
+	txResponse.Tx.Data = lr.abi.Methods[txResponse.MethodName].Id()
 
-	if txResponse.methodName == "createPromoKitty" {
-		txInput, err := lr.abi.Methods["createPromoKitty"].Inputs.Pack(txResponse.bigIntArgument, txResponse.addressArgument[0])
+	if txResponse.MethodName == "createPromoKitty" {
+		txInput, err := lr.abi.Methods["createPromoKitty"].Inputs.Pack(txResponse.BigIntArgument, txResponse.AddressArgument[0])
 		fatalError(err)
-		txResponse.tx.Data = append(lr.abi.Methods["createPromoKitty"].Id(), txInput...)
+		txResponse.Tx.Data = append(lr.abi.Methods["createPromoKitty"].Id(), txInput...)
 
 		// giveBirth(uint256 _matronId)
-	} else if txResponse.methodName == "giveBirth" {
-		matronID := txResponse.originalIds[0]
+	} else if txResponse.MethodName == "giveBirth" {
+		matronID := txResponse.OriginalIds[0]
 		if newID, ok := idMap[matronID]; ok {
 			matronID = newID
 		}
 
 		txInput, err := lr.abi.Methods["giveBirth"].Inputs.Pack(big.NewInt(matronID))
 		fatalError(err)
-		txResponse.tx.Data = append(lr.abi.Methods["giveBirth"].Id(), txInput...)
+		txResponse.Tx.Data = append(lr.abi.Methods["giveBirth"].Id(), txInput...)
 
 		// approveSiring(address _addr, uint256 _sireId)
 		//      transfer(address _to, uint256 _tokenId)
 		//       approve(address _to, uint256 _tokenId)
-	} else if txResponse.methodName == "approveSiring" {
-		tokenID := txResponse.originalIds[0]
+	} else if txResponse.MethodName == "approveSiring" {
+		tokenID := txResponse.OriginalIds[0]
 		if newID, ok := idMap[tokenID]; ok {
 			tokenID = newID
 		}
 
-		txInput, err := lr.abi.Methods["approveSiring"].Inputs.Pack(txResponse.addressArgument[0], big.NewInt(tokenID))
+		txInput, err := lr.abi.Methods["approveSiring"].Inputs.Pack(txResponse.AddressArgument[0], big.NewInt(tokenID))
 		fatalError(err)
-		txResponse.tx.Data = append(lr.abi.Methods["approveSiring"].Id(), txInput...)
-	} else if txResponse.methodName == "transfer" {
-		tokenID := txResponse.originalIds[0]
+		txResponse.Tx.Data = append(lr.abi.Methods["approveSiring"].Id(), txInput...)
+	} else if txResponse.MethodName == "transfer" {
+		tokenID := txResponse.OriginalIds[0]
 		if newID, ok := idMap[tokenID]; ok {
 			tokenID = newID
 		}
 
-		txInput, err := lr.abi.Methods["transfer"].Inputs.Pack(txResponse.addressArgument[0], big.NewInt(tokenID))
+		txInput, err := lr.abi.Methods["transfer"].Inputs.Pack(txResponse.AddressArgument[0], big.NewInt(tokenID))
 		fatalError(err)
-		txResponse.tx.Data = append(lr.abi.Methods["transfer"].Id(), txInput...)
-	} else if txResponse.methodName == "approve" {
-		tokenID := txResponse.originalIds[0]
+		txResponse.Tx.Data = append(lr.abi.Methods["transfer"].Id(), txInput...)
+	} else if txResponse.MethodName == "approve" {
+		tokenID := txResponse.OriginalIds[0]
 		if newID, ok := idMap[tokenID]; ok {
 			tokenID = newID
 		}
 
-		txInput, err := lr.abi.Methods["approve"].Inputs.Pack(txResponse.addressArgument[0], big.NewInt(tokenID))
+		txInput, err := lr.abi.Methods["approve"].Inputs.Pack(txResponse.AddressArgument[0], big.NewInt(tokenID))
 		fatalError(err)
-		txResponse.tx.Data = append(lr.abi.Methods["approve"].Id(), txInput...)
+		txResponse.Tx.Data = append(lr.abi.Methods["approve"].Id(), txInput...)
 		// breed(uint256 _matronId, uint256 _sireId)
-	} else if txResponse.methodName == "breed" {
-		matronID := txResponse.originalIds[0]
+	} else if txResponse.MethodName == "breed" {
+		matronID := txResponse.OriginalIds[0]
 		if newID, ok := idMap[matronID]; ok {
 			matronID = newID
 		}
-		sireID := txResponse.originalIds[1]
+		sireID := txResponse.OriginalIds[1]
 		if newID, ok := idMap[sireID]; ok {
 			sireID = newID
 		}
 		txInput, err := lr.abi.Methods["breed"].Inputs.Pack(big.NewInt(matronID), big.NewInt(sireID))
-		txResponse.tx.Data = append(lr.abi.Methods["breed"].Id(), txInput...)
+		txResponse.Tx.Data = append(lr.abi.Methods["breed"].Id(), txInput...)
 		fatalError(err)
 
 		// transferFrom(address _from, address _to, uint256 _tokenId)
-	} else if txResponse.methodName == "transferFrom" {
-		tokenID := txResponse.originalIds[0]
+	} else if txResponse.MethodName == "transferFrom" {
+		tokenID := txResponse.OriginalIds[0]
 		if newID, ok := idMap[tokenID]; ok {
 			tokenID = newID
 		}
-		txInput, err := lr.abi.Methods["transferFrom"].Inputs.Pack(txResponse.addressArgument[0], txResponse.addressArgument[1], big.NewInt(tokenID))
+		txInput, err := lr.abi.Methods["transferFrom"].Inputs.Pack(txResponse.AddressArgument[0], txResponse.AddressArgument[1], big.NewInt(tokenID))
 		fatalError(err)
-		txResponse.tx.Data = append(lr.abi.Methods["transferFrom"].Id(), txInput...)
+		txResponse.Tx.Data = append(lr.abi.Methods["transferFrom"].Id(), txInput...)
 
 	} else {
-		logrus.Fatalf("Method not found %v", txResponse.methodName)
+		logrus.Fatalf("Method not found %v", txResponse.MethodName)
 	}
 }
 
@@ -178,10 +186,10 @@ func (lr *LogsReader) LogsLoader() chan *TxResponse {
 	go func() {
 		for {
 			txResponse := TxResponse{
-				chainID: lr.chainID,
+				ChainID: lr.chainID,
 			}
 
-			txResponse.tx = &payload.CallTx{
+			txResponse.Tx = &payload.CallTx{
 				Address:  lr.contractAddr,
 				Fee:      1,
 				GasLimit: 4100000000,
@@ -206,21 +214,21 @@ func (lr *LogsReader) LogsLoader() chan *TxResponse {
 				// Should call createPromoKitty(uint256 _genes, address _owner)
 				if matronID == 0 && sireID == 0 {
 					// From contract owner
-					txResponse.signer = lr.getOrCreateAccount(common.BigToAddress(common.Big0))
+					txResponse.Signer = lr.getOrCreateAccount(common.BigToAddress(common.Big0))
 					debugf("createPromoKitty %v", kittyID)
-					txResponse.methodName = "createPromoKitty"
-					txResponse.bigIntArgument = genes
-					txResponse.addressArgument = []common.Address{common.BytesToAddress(simulatedOwner.account.GetAddress().Bytes())}
-					txResponse.originalIds = []int64{kittyID}
-					txResponse.originalBirthID = kittyID
+					txResponse.MethodName = "createPromoKitty"
+					txResponse.BigIntArgument = genes
+					txResponse.AddressArgument = []common.Address{common.BytesToAddress(simulatedOwner.account.GetAddress().Bytes())}
+					txResponse.OriginalIds = []int64{kittyID}
+					txResponse.OriginalBirthID = kittyID
 				} else {
 					// From simulated owner (givin birth)
-					txResponse.signer = simulatedOwner
+					txResponse.Signer = simulatedOwner
 					debugf("giveBirth %v from: %v and %v owner: %v", kittyID, matronID, sireID, simulatedOwner.account.GetAddress())
 					// Should call giveBirth(uint256 _matronId)
-					txResponse.methodName = "giveBirth"
-					txResponse.originalIds = []int64{matronID, sireID, kittyID}
-					txResponse.originalBirthID = kittyID
+					txResponse.MethodName = "giveBirth"
+					txResponse.OriginalIds = []int64{matronID, sireID, kittyID}
+					txResponse.OriginalBirthID = kittyID
 				}
 				// Consume Transfer event
 				lr.logsReader.ReadString('\n')
@@ -240,31 +248,31 @@ func (lr *LogsReader) LogsLoader() chan *TxResponse {
 				// Should call approveSiring(address _addr, uint256 _sireId)
 				if bytes.Compare(lr.tokenMap[sireID].Bytes(), owner.Bytes()) != 0 {
 					approveSiringTx := TxResponse{
-						chainID: lr.chainID,
+						ChainID: lr.chainID,
 					}
 
-					approveSiringTx.tx = &payload.CallTx{
+					approveSiringTx.Tx = &payload.CallTx{
 						Address:  lr.contractAddr,
 						Fee:      1,
 						GasLimit: 4100000000,
 					}
 					simulatedSireOwner := lr.getOrCreateAccount(lr.tokenMap[sireID])
-					approveSiringTx.signer = simulatedSireOwner
+					approveSiringTx.Signer = simulatedSireOwner
 					debugf("approveSiring %v", sireID)
-					approveSiringTx.methodName = "approveSiring"
-					approveSiringTx.addressArgument = []common.Address{common.BytesToAddress(simulatedOwner.account.GetAddress().Bytes())}
-					approveSiringTx.tx.Input = &payload.TxInput{
+					approveSiringTx.MethodName = "approveSiring"
+					approveSiringTx.AddressArgument = []common.Address{common.BytesToAddress(simulatedOwner.account.GetAddress().Bytes())}
+					approveSiringTx.Tx.Input = &payload.TxInput{
 						Address: simulatedSireOwner.account.GetAddress(),
 						Amount:  1,
 					}
-					approveSiringTx.originalIds = []int64{sireID}
+					approveSiringTx.OriginalIds = []int64{sireID}
 					txsChan <- &approveSiringTx
 				}
 				// Should call breed(uint256 _matronId, uint256 _sireId)
 				debugf("breed %v %v", matronID, sireID)
-				txResponse.methodName = "breed"
-				txResponse.signer = simulatedOwner
-				txResponse.originalIds = []int64{matronID, sireID}
+				txResponse.MethodName = "breed"
+				txResponse.Signer = simulatedOwner
+				txResponse.OriginalIds = []int64{matronID, sireID}
 
 				//              0      1    2    3    4      5        6
 				// Approval/Transfer from <addr> to <addr> tokenId <tokenID>
@@ -276,37 +284,37 @@ func (lr *LogsReader) LogsLoader() chan *TxResponse {
 
 				tokenID, _ := strconv.ParseInt(splitLine[6], 10, 64)
 				if splitLine[0] == "Approval" {
-					txResponse.signer = simulatedFrom
+					txResponse.Signer = simulatedFrom
 					lr.addAllowed(simulatedFrom.account.GetAddress(), to, tokenID)
 					debugf("approve from: %v to: %v token: %v", simulatedFrom.account.GetAddress(), simulatedTo.account.GetAddress(), tokenID)
-					txResponse.methodName = "approve"
-					txResponse.addressArgument = []common.Address{common.BytesToAddress(simulatedTo.account.GetAddress().Bytes())}
+					txResponse.MethodName = "approve"
+					txResponse.AddressArgument = []common.Address{common.BytesToAddress(simulatedTo.account.GetAddress().Bytes())}
 				} else {
 					// Should call transferFrom(address _from, address _to, uint256 _tokenId)
 					if lr.isAllowed(simulatedFrom.account.GetAddress(), tokenID) {
 						fromAllowed := lr.allowedMap[simulatedFrom.account.GetAddress()][tokenID]
-						txResponse.signer = lr.getOrCreateAccount(fromAllowed)
-						debugf("transferFrom sender: %v from: %v to: %v token: %v", txResponse.signer.account.GetAddress(), simulatedFrom.account.GetAddress(), simulatedTo.account.GetAddress(), tokenID)
-						txResponse.methodName = "transferFrom"
-						txResponse.addressArgument = []common.Address{common.BytesToAddress(simulatedFrom.account.GetAddress().Bytes()),
+						txResponse.Signer = lr.getOrCreateAccount(fromAllowed)
+						debugf("transferFrom sender: %v from: %v to: %v token: %v", txResponse.Signer.account.GetAddress(), simulatedFrom.account.GetAddress(), simulatedTo.account.GetAddress(), tokenID)
+						txResponse.MethodName = "transferFrom"
+						txResponse.AddressArgument = []common.Address{common.BytesToAddress(simulatedFrom.account.GetAddress().Bytes()),
 							common.BytesToAddress(simulatedTo.account.GetAddress().Bytes())}
 						lr.deleteAllowed(simulatedTo.account.GetAddress(), tokenID)
 						// Should call transfer(address _to, uint256 _tokenId))
 					} else {
-						txResponse.signer = simulatedFrom
+						txResponse.Signer = simulatedFrom
 						debugf("transfer %v -> %v %v", simulatedFrom.account.GetAddress(), simulatedTo.account.GetAddress(), tokenID)
-						txResponse.methodName = "transfer"
-						txResponse.addressArgument = []common.Address{common.BytesToAddress(simulatedTo.account.GetAddress().Bytes())}
+						txResponse.MethodName = "transfer"
+						txResponse.AddressArgument = []common.Address{common.BytesToAddress(simulatedTo.account.GetAddress().Bytes())}
 					}
 					lr.tokenMap[tokenID] = to
 				}
-				txResponse.originalIds = []int64{tokenID}
+				txResponse.OriginalIds = []int64{tokenID}
 			} else {
 				logrus.Fatalf("Error, unknown event %v", splitLine[0])
 			}
 
-			txResponse.tx.Input = &payload.TxInput{
-				Address: txResponse.signer.account.GetAddress(),
+			txResponse.Tx.Input = &payload.TxInput{
+				Address: txResponse.Signer.account.GetAddress(),
 				Amount:  1,
 				// Sequence: fromAcc.sequence,
 			}
@@ -316,13 +324,13 @@ func (lr *LogsReader) LogsLoader() chan *TxResponse {
 	return txsChan
 }
 
-func (lr *LogsReader) extractIDTransfer(event *exec.Event) int64 {
+func (lr *LogsReader) ExtractIDTransfer(event *exec.Event) int64 {
 	kittyID := common.Big0
 	kittyID.SetBytes(event.Log.Data[len(event.Log.Data)-32:])
 	return kittyID.Int64()
 }
 
-func (lr *LogsReader) extractIDPregnant(event *exec.Event) []int {
+func (lr *LogsReader) ExtractIDPregnant(event *exec.Event) []int {
 	matronID := big.NewInt(0)
 	sireID := big.NewInt(0)
 	// 32*3 matronId
