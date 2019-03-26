@@ -26,6 +26,10 @@ contract SERC721 {
 
 contract Breeder {
     uint32 lastId;
+    GeneScience geneScience;
+    constructor(GeneScience _geneScience) public {
+        geneScience = _geneScience;
+    }
 
     function _isValidMatingPair(
         Kitty _matron,
@@ -99,7 +103,7 @@ contract Breeder {
         require(sire.siringWithId() == 0);
 
         // Test that these cats are a valid mating pair.
-        require(_isValidMatingPair(matron, sire));
+        // require(_isValidMatingPair(matron, sire));
 
         // All checks passed, kitty gets pregnant!
         matron.matronBreedWith(sire);
@@ -145,12 +149,11 @@ contract Breeder {
         _createKitty(0, 0, 0, _genes, _owner);
     }
 
-    function giveBirth(Kitty matron) external  returns(Kitty) {
+    function giveBirth(Kitty matron) external returns(Kitty) {
         // TODO: Verify that matron was created by me
 
         // Check that the matron is pregnant, and that its time has come!
         require(matron.siringWithId() != 0);
-        require(matron.siringGeneration() != 0);
 
         uint16 parentGen = matron.generation();
         if (matron.siringGeneration() > matron.generation()) {
@@ -258,6 +261,7 @@ contract Kitty is SERC721 {
 
         // Mark the matron as pregnant, keeping track of who the sire is.
         siringWithId = uint32(sire.kittyId());
+        siringGeneration = uint16(sire.generation());
 
         // Trigger the cooldown for both parents.
         // _triggerCooldown(sire);
