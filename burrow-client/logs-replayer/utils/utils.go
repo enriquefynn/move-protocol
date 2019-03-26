@@ -4,8 +4,9 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/enriquefynn/sharding-runner/burrow-client/config"
 	"github.com/enriquefynn/sharding-runner/burrow-client/logs-replayer/logsreader"
-	"github.com/enriquefynn/sharding-runner/burrow-client/utils"
+	"github.com/enriquefynn/sharding-runner/burrow-client/logs-replayer/partitioning"
 	"github.com/hyperledger/burrow/crypto"
 	"github.com/hyperledger/burrow/deploy/def"
 	"github.com/hyperledger/burrow/execution/exec"
@@ -60,7 +61,7 @@ func ListenBlocks(client *def.Client, blockCh chan<- *exec.BlockExecution) {
 	})
 }
 
-func CreateContract(config *utils.Config, accounts *logsreader.LogsReader, client *def.Client, path string, args ...interface{}) (*crypto.Address, error) {
+func CreateContract(config *config.Config, accounts *logsreader.LogsReader, client *def.Client, path string, args ...interface{}) (*crypto.Address, error) {
 	contractEnv, err := accounts.CreateContract(path, args...)
 	if err != nil {
 		return nil, err
@@ -112,7 +113,21 @@ func NewDependencies() *Dependencies {
 }
 
 // AddDependency add a dependency and return if is allowed to send tx
-func (dp *Dependencies) AddDependency(tx *logsreader.TxResponse) bool {
+func (dp *Dependencies) AddDependency(tx *logsreader.TxResponse, partitioning partitioning.Partitioning) bool {
+	var partitioningObjects []int64
+
+	if len(tx.OriginalIds) == 3 {
+		partitioningObjects = tx.OriginalIds[:2]
+	} else {
+		partitioningObjects = tx.OriginalIds
+	}
+	shouldPartition := !partitioning.IsSame(partitioningObjects...)
+
+	if shouldPartition {
+		whichPartition := partitioning.WhereToMove(partitioningObjects...)
+		logrus.Infof("Moving to %v", whichPartition)
+	}
+
 	newNode := &Node{
 		tx:    tx,
 		child: make(map[int64]*Node),

@@ -44,6 +44,7 @@ func (lr *LogsReader) ChangeIDsMultiShard(txResponse *TxResponse, idMap map[int6
 		tokenID := txResponse.OriginalIds[0]
 		kittyContractAddr := idMap[tokenID]
 		txResponse.Tx.Address = &kittyContractAddr
+		// logrus.Infof("Calling: %v", kittyContractAddr)
 
 		if txResponse.MethodName == "approveSiring" {
 			txInput, err := lr.kittyABI.Methods["approveSiring"].Inputs.Pack(txResponse.AddressArgument[0])
@@ -70,5 +71,5 @@ func (lr *LogsReader) ChangeIDsMultiShard(txResponse *TxResponse, idMap map[int6
 }
 
 func (lr *LogsReader) ExtractNewContractAddress(event *exec.Event) crypto.Address {
-	return crypto.MustAddressFromBytes(event.Log.Data[:20])
+	return crypto.MustAddressFromBytes(event.Log.Data[12:32])
 }

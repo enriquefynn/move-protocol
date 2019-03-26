@@ -21,5 +21,9 @@ benchmark:
   address: "127.0.0.1:20002"
   outstandingTxs: 300
 
+partitioning:
+  type: "hash"
+  numberPartitions: 2
+
 logs:
   dir: "./data/logs/"
