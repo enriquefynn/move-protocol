@@ -285,7 +285,9 @@ contract CryptoKitties is ERC721 {
         }
 
         // Call the sooper-sekret gene mixing operation.
-        uint256 childGenes = geneScience.mixGenes(matron.genes, sire.genes, matron.cooldownEndBlock - 1);
+        // geneScience.mixGenes(matron.genes, sire.genes, matron.cooldownEndBlock - 1);
+        // uint256 childGenes = geneScience.mixGenes(matron.genes, sire.genes);
+        uint256 childGenes = 1;
 
         // Make the new kitten!
         address owner = kittyIndexToOwner[_matronId];
@@ -299,7 +301,7 @@ contract CryptoKitties is ERC721 {
         pregnantKitties--;
 
         // Send the balance fee to the person who made birth happen.
-        msg.sender.transfer(autoBirthFee);
+        // msg.sender.transfer(autoBirthFee);
 
         // return the new kitten's ID
         return kittenId;
@@ -457,6 +459,19 @@ contract CryptoKitties is ERC721 {
         // All checks passed, kitty gets pregnant!
         _breedWith(_matronId, _sireId);
     }
+
+    /// @notice Grants approval to another user to sire with one of your Kitties.
+    /// @param _addr The address that will be able to sire with your Kitty. Set to
+    ///  address(0) to clear all siring approvals for this Kitty.
+    /// @param _sireId A Kitty that you own that _addr will now be able to sire with.
+    function approveSiring(address _addr, uint256 _sireId)
+        external
+    {
+        require(_owns(msg.sender, _sireId));
+        sireAllowedToAddress[_sireId] = _addr;
+    }
+
+
     function _isSiringPermitted(uint256 _sireId, uint256 _matronId) internal view returns (bool) {
         address matronOwner = kittyIndexToOwner[_matronId];
         address sireOwner = kittyIndexToOwner[_sireId];
