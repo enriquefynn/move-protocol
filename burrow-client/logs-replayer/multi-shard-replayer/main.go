@@ -25,12 +25,6 @@ func checkFatalError(err error) {
 	}
 }
 
-type methodAndID struct {
-	method  string
-	ids     []int64
-	birthID int64
-}
-
 func clientEmitter(config *config.Config, client *def.Client, logsReader *logsreader.LogsReader, blockChan chan *exec.BlockExecution) {
 	// Partitioning
 	var partitioning = partitioning.GetPartitioning(config)
@@ -43,7 +37,7 @@ func clientEmitter(config *config.Config, client *def.Client, logsReader *logsre
 	outstandingTxs := config.Benchmark.OutstandingTxs
 
 	// SentTx that are not received
-	sentTxs := make(map[string]methodAndID)
+	sentTxs := make(map[string]*logsreader.TxResponse)
 
 	// Dependency graph
 	dependencyGraph := utils.NewDependencies()
@@ -53,11 +47,7 @@ func clientEmitter(config *config.Config, client *def.Client, logsReader *logsre
 		signedTx := tx.Sign()
 		_, err := client.BroadcastEnvelopeAsync(signedTx)
 		checkFatalError(err)
-		sentTxs[string(signedTx.Tx.Hash())] = methodAndID{
-			method:  tx.MethodName,
-			ids:     tx.OriginalIds,
-			birthID: tx.OriginalBirthID,
-		}
+		sentTxs[string(signedTx.Tx.Hash())] = tx
 	}
 
 	// First txs
@@ -67,7 +57,9 @@ func clientEmitter(config *config.Config, client *def.Client, logsReader *logsre
 			break
 		}
 		// logrus.Infof("SENDING: %v", txResponse.methodName)
-		shouldWait := dependencyGraph.AddDependency(txResponse)
+		// Should we move this thing?
+		// moveTxs := logsReader.CreateMoveTx(txResponse, partitioning, idMap)
+		shouldWait := dependencyGraph.AddDependency(txResponse, partitioning)
 		if !shouldWait {
 			sendTx(txResponse)
 		}
@@ -88,12 +80,12 @@ func clientEmitter(config *config.Config, client *def.Client, logsReader *logsre
 			if sentTx, ok := sentTxs[txHash]; ok {
 				// logrus.Infof("Executing: %v %v", sentTx.method, sentTx.ids)
 				if tx.Exception != nil {
-					logrus.Fatalf("Exception happened %v executing %v %v", tx.Exception, sentTx.method, sentTx.ids)
+					logrus.Fatalf("Exception happened %v executing %v %v", tx.Exception, sentTx.MethodName, sentTx.OriginalIds)
 				}
 
-				freedTxs := dependencyGraph.RemoveDependency(sentTx.ids)
+				freedTxs := dependencyGraph.RemoveDependency(sentTx.OriginalIds)
 
-				if sentTx.method == "createPromoKitty" || sentTx.method == "giveBirth" {
+				if sentTx.MethodName == "createPromoKitty" || sentTx.MethodName == "giveBirth" {
 					var event *exec.Event
 
 					for _, ev := range tx.Events {
@@ -102,7 +94,7 @@ func clientEmitter(config *config.Config, client *def.Client, logsReader *logsre
 							break
 						}
 					}
-					idMap[int64(sentTx.birthID)] = logsReader.ExtractNewContractAddress(event)
+					idMap[int64(sentTx.OriginalBirthID)] = logsReader.ExtractNewContractAddress(event)
 				}
 
 				delete(sentTxs, txHash)
@@ -123,7 +115,7 @@ func clientEmitter(config *config.Config, client *def.Client, logsReader *logsre
 				logrus.Warnf("No more txs in channel")
 				break
 			}
-			shouldWait := dependencyGraph.AddDependency(txResponse)
+			shouldWait := dependencyGraph.AddDependency(txResponse, partitioning)
 			if !shouldWait {
 				// logrus.Infof("Sending tx: %v (%v)", txResponse.methodName, txResponse.originalIds)
 				sendTx(txResponse)

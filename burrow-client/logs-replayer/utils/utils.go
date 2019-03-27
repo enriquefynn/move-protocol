@@ -114,19 +114,6 @@ func NewDependencies() *Dependencies {
 
 // AddDependency add a dependency and return if is allowed to send tx
 func (dp *Dependencies) AddDependency(tx *logsreader.TxResponse, partitioning partitioning.Partitioning) bool {
-	var partitioningObjects []int64
-
-	if len(tx.OriginalIds) == 3 {
-		partitioningObjects = tx.OriginalIds[:2]
-	} else {
-		partitioningObjects = tx.OriginalIds
-	}
-	shouldPartition := !partitioning.IsSame(partitioningObjects...)
-
-	if shouldPartition {
-		whichPartition := partitioning.WhereToMove(partitioningObjects...)
-		logrus.Infof("Moving to %v", whichPartition)
-	}
 
 	newNode := &Node{
 		tx:    tx,

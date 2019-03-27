@@ -1,8 +1,13 @@
 package logsreader
 
 import (
+	"math/big"
+	"strconv"
+
+	"github.com/enriquefynn/sharding-runner/burrow-client/logs-replayer/partitioning"
 	"github.com/hyperledger/burrow/crypto"
 	"github.com/hyperledger/burrow/execution/exec"
+	"github.com/hyperledger/burrow/txs/payload"
 	"github.com/sirupsen/logrus"
 )
 
@@ -72,4 +77,70 @@ func (lr *LogsReader) ChangeIDsMultiShard(txResponse *TxResponse, idMap map[int6
 
 func (lr *LogsReader) ExtractNewContractAddress(event *exec.Event) crypto.Address {
 	return crypto.MustAddressFromBytes(event.Log.Data[12:32])
+}
+
+func NewTxResponse(methodName string, chainID, originalID int64, signer *SeqAccount, to, from crypto.Address, amount uint64, data []byte) *TxResponse {
+	newTx := payload.CallTx{
+		Input: &payload.TxInput{
+			Address: from,
+			Amount:  amount,
+		},
+		Address:  &to,
+		Fee:      1,
+		GasLimit: 4100000000,
+		Data:     data,
+	}
+	return &TxResponse{
+		ChainID:     strconv.Itoa(int(chainID)),
+		Tx:          &newTx,
+		Signer:      signer,
+		MethodName:  methodName,
+		OriginalIds: []int64{originalID},
+	}
+
+}
+func (lr *LogsReader) CreateMoveTx(tx *TxResponse, partitioning partitioning.Partitioning, idMap map[int64]crypto.Address) []*TxResponse {
+	var txResponses []*TxResponse
+	var partitioningObjects []int64
+	var partitionToGo int64
+
+	if len(tx.OriginalIds) == 3 {
+		// Last one is the kitty id, should not be considered (create in same partition as matron)
+		partitioningObjects = tx.OriginalIds[:2]
+	} else {
+		partitioningObjects = tx.OriginalIds
+	}
+	shouldMove := !partitioning.IsSame(partitioningObjects...)
+
+	if shouldMove {
+		partitionToGo = partitioning.WhereToMove(partitioningObjects...)
+	} else {
+		// No need to move
+		return nil
+	}
+
+	for _, id := range partitioningObjects {
+		originalPartition := partitioning.Get(id)
+		// Should move this id
+		if originalPartition != partitionToGo {
+			// Move input
+			txInput, err := lr.kittyABI.Methods["moveTo"].Inputs.Pack(big.NewInt(partitionToGo))
+			fatalError(err)
+			txData := append(lr.kittyABI.Methods["moveTo"].Id(), txInput...)
+
+			accountToMove := idMap[id]
+			// move from originalPartition to partitionToGo
+			moveToTxResponse := NewTxResponse("moveTo", originalPartition, id, tx.Signer, accountToMove, tx.Tx.Input.Address, tx.Tx.Input.Amount, txData)
+			// move from originalPartition to partitionToGo
+			move2TxResponse := NewTxResponse("move2", partitionToGo, id, tx.Signer, accountToMove, tx.Tx.Input.Address, tx.Tx.Input.Amount, txData)
+
+			txResponses = append(txResponses, moveToTxResponse)
+			txResponses = append(txResponses, move2TxResponse)
+
+			logrus.Infof("Moving %v from %v to %v", accountToMove, originalPartition, partitionToGo)
+
+		}
+	}
+	return txResponses
+
 }
