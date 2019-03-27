@@ -6,7 +6,7 @@ contract SERC721 {
     function approve(address _to) external;
     function transfer(address _to) external;
     function transferFrom(address _to) external;
-    function moveTo(uint _toShard) external;
+    function moveTo(uint256 _toShard) external;
 
     // Events
     event Transfer(address from, address to, Kitty tokenId);
