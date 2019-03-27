@@ -1,4 +1,4 @@
-package utils
+package config
 
 import (
 	"encoding/hex"
@@ -18,6 +18,7 @@ type Config struct {
 		Deploy                 bool   `yaml:"deploy"`
 		Path                   string `yaml:"path"`
 		CKABI                  string `yaml:"ckABI"`
+		KittyABI               string `yaml:"kittyABI"`
 		GenePath               string `yaml:"genePath"`
 		GeneABI                string `yaml:"geneABI"`
 		Address                string `yaml:"address"`
@@ -31,6 +32,13 @@ type Config struct {
 		Timeout        int    `yaml:"timeout"`
 		Address        string `yaml:"address"`
 		OutstandingTxs int    `yaml:"outstandingTxs"`
+	}
+	Logs struct {
+		Dir string `yaml:"dir"`
+	}
+	Partitioning struct {
+		Type             string `yaml:"type"`
+		NumberPartitions int64  `yaml:"numberPartitions"`
 	}
 }
 
