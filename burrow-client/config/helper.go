@@ -13,6 +13,11 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+type ServerTuple struct {
+	ChainID string `yaml:"chainID"`
+	Address string `yaml:"address"`
+}
+
 type Config struct {
 	Contracts struct {
 		Deploy                 bool   `yaml:"deploy"`
@@ -27,11 +32,13 @@ type Config struct {
 		ContractMappingPath    string `yaml:"contractMappingPath"`
 	}
 	Benchmark struct {
-		ChainID        string `yaml:"chainID"`
-		Clients        int    `yaml:"clients"`
-		Timeout        int    `yaml:"timeout"`
-		Address        string `yaml:"address"`
-		OutstandingTxs int    `yaml:"outstandingTxs"`
+		Clients        int `yaml:"clients"`
+		OutstandingTxs int `yaml:"outstandingTxs"`
+		Timeout        int `yaml:"timeout"`
+	}
+	Servers []struct {
+		ChainID string `yaml:"chainID"`
+		Address string `yaml:"address"`
 	}
 	Logs struct {
 		Dir string `yaml:"dir"`

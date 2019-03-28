@@ -4,17 +4,17 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/hyperledger/burrow/rpc/rpcquery"
+
 	"github.com/enriquefynn/sharding-runner/burrow-client/config"
 	"github.com/enriquefynn/sharding-runner/burrow-client/logs-replayer/logsreader"
-	"github.com/enriquefynn/sharding-runner/burrow-client/logs-replayer/partitioning"
 	"github.com/hyperledger/burrow/crypto"
 	"github.com/hyperledger/burrow/deploy/def"
-	"github.com/hyperledger/burrow/execution/exec"
 	"github.com/hyperledger/burrow/rpc/rpcevents"
 	"github.com/sirupsen/logrus"
 )
 
-func ListenBlockHeaders(client *def.Client, logs *Log) {
+func ListenBlockHeaders(client *def.Client, logs *Log, blockChan chan<- *rpcquery.SignedHeadersResult) {
 	defer func() { logs.Close() }()
 	end := rpcevents.StreamBound()
 
@@ -26,7 +26,7 @@ func ListenBlockHeaders(client *def.Client, logs *Log) {
 	checkFatalError(err)
 
 	commence := false
-	closing := 0
+	// closing := 0
 	for {
 		resp, err := signedHeaders.Recv()
 		checkFatalError(err)
@@ -34,35 +34,36 @@ func ListenBlockHeaders(client *def.Client, logs *Log) {
 			commence = true
 		}
 		if commence {
+			blockChan <- resp
 			logs.Log("tput", "%d %d\n", resp.SignedHeader.TotalTxs, resp.SignedHeader.Time.UnixNano())
 			logs.Flush()
-			if resp.SignedHeader.NumTxs == 0 {
-				closing++
-				if closing == 3 {
-					break
-				}
-			}
+			// if resp.SignedHeader.NumTxs == 0 {
+			// 	closing++
+			// 	if closing == 3 {
+			// 		break
+			// 	}
+			// }
 		}
 	}
 }
 
-func ListenBlocks(client *def.Client, blockCh chan<- *exec.BlockExecution) {
-	end := rpcevents.StreamBound()
+// func ListenBlocks(client *def.Client, blockCh chan<- *exec.BlockExecution) {
+// 	end := rpcevents.StreamBound()
 
-	request := &rpcevents.BlocksRequest{
-		BlockRange: rpcevents.NewBlockRange(rpcevents.AbsoluteBound(1), end),
-	}
-	clientEvents, err := client.Events()
-	stream, err := clientEvents.Stream(context.Background(), request)
-	checkFatalError(err)
-	rpcevents.ConsumeBlockExecutions(stream, func(blk *exec.BlockExecution) error {
-		blockCh <- blk
-		return nil
-	})
-}
+// 	request := &rpcevents.BlocksRequest{
+// 		BlockRange: rpcevents.NewBlockRange(rpcevents.AbsoluteBound(1), end),
+// 	}
+// 	clientEvents, err := client.Events()
+// 	stream, err := clientEvents.Stream(context.Background(), request)
+// 	checkFatalError(err)
+// 	rpcevents.ConsumeBlockExecutions(stream, func(blk *exec.BlockExecution) error {
+// 		blockCh <- blk
+// 		return nil
+// 	})
+// }
 
-func CreateContract(config *config.Config, accounts *logsreader.LogsReader, client *def.Client, path string, args ...interface{}) (*crypto.Address, error) {
-	contractEnv, err := accounts.CreateContract(path, args...)
+func CreateContract(chainID string, config *config.Config, accounts *logsreader.LogsReader, client *def.Client, path string, args ...interface{}) (*crypto.Address, error) {
+	contractEnv, err := accounts.CreateContract(chainID, path, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -113,7 +114,7 @@ func NewDependencies() *Dependencies {
 }
 
 // AddDependency add a dependency and return if is allowed to send tx
-func (dp *Dependencies) AddDependency(tx *logsreader.TxResponse, partitioning partitioning.Partitioning) bool {
+func (dp *Dependencies) AddDependency(tx *logsreader.TxResponse) bool {
 
 	newNode := &Node{
 		tx:    tx,

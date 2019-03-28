@@ -11,8 +11,8 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-func (lr *LogsReader) ChangeIDsMultiShard(txResponse *TxResponse, idMap map[int64]crypto.Address) {
-	txResponse.Tx.Data = lr.abi.Methods[txResponse.MethodName].Id()
+func (lr *LogsReader) ChangeIDsMultiShard(txResponse *TxResponse, idMap map[int64]*crypto.Address, contractsMap []*crypto.Address) {
+	txResponse.Tx.Address = contractsMap[int64(txResponse.PartitionIndex)]
 
 	if txResponse.MethodName == "createPromoKitty" {
 		txInput, err := lr.abi.Methods["createPromoKitty"].Inputs.Pack(txResponse.BigIntArgument, txResponse.AddressArgument[0])
@@ -47,8 +47,7 @@ func (lr *LogsReader) ChangeIDsMultiShard(txResponse *TxResponse, idMap map[int6
 	} else {
 		// Update interacting contract
 		tokenID := txResponse.OriginalIds[0]
-		kittyContractAddr := idMap[tokenID]
-		txResponse.Tx.Address = &kittyContractAddr
+		txResponse.Tx.Address = idMap[tokenID]
 		// logrus.Infof("Calling: %v", kittyContractAddr)
 
 		if txResponse.MethodName == "approveSiring" {
@@ -75,8 +74,9 @@ func (lr *LogsReader) ChangeIDsMultiShard(txResponse *TxResponse, idMap map[int6
 	}
 }
 
-func (lr *LogsReader) ExtractNewContractAddress(event *exec.Event) crypto.Address {
-	return crypto.MustAddressFromBytes(event.Log.Data[12:32])
+func (lr *LogsReader) ExtractNewContractAddress(event *exec.Event) *crypto.Address {
+	addr := crypto.MustAddressFromBytes(event.Log.Data[12:32])
+	return &addr
 }
 
 func NewTxResponse(methodName string, chainID, originalID int64, signer *SeqAccount, to, from crypto.Address, amount uint64, data []byte) *TxResponse {
@@ -99,10 +99,9 @@ func NewTxResponse(methodName string, chainID, originalID int64, signer *SeqAcco
 	}
 
 }
-func (lr *LogsReader) CreateMoveTx(tx *TxResponse, partitioning partitioning.Partitioning, idMap map[int64]crypto.Address) []*TxResponse {
+func (lr *LogsReader) CreateMoveDecidePartitioning(tx *TxResponse, partitioning partitioning.Partitioning, idMap map[int64]*crypto.Address) []*TxResponse {
 	var txResponses []*TxResponse
 	var partitioningObjects []int64
-	var partitionToGo int64
 
 	if len(tx.OriginalIds) == 3 {
 		// Last one is the kitty id, should not be considered (create in same partition as matron)
@@ -112,9 +111,11 @@ func (lr *LogsReader) CreateMoveTx(tx *TxResponse, partitioning partitioning.Par
 	}
 	shouldMove := !partitioning.IsSame(partitioningObjects...)
 
-	if shouldMove {
-		partitionToGo = partitioning.WhereToMove(partitioningObjects...)
-	} else {
+	partitionToGo := partitioning.WhereToMove(partitioningObjects...)
+	// set the partition to go tx
+	tx.PartitionIndex = int(partitionToGo - 1)
+	tx.ChainID = strconv.Itoa(tx.PartitionIndex + 1)
+	if !shouldMove {
 		// No need to move
 		return nil
 	}
@@ -130,9 +131,9 @@ func (lr *LogsReader) CreateMoveTx(tx *TxResponse, partitioning partitioning.Par
 
 			accountToMove := idMap[id]
 			// move from originalPartition to partitionToGo
-			moveToTxResponse := NewTxResponse("moveTo", originalPartition, id, tx.Signer, accountToMove, tx.Tx.Input.Address, tx.Tx.Input.Amount, txData)
+			moveToTxResponse := NewTxResponse("moveTo", originalPartition, id, tx.Signer, *accountToMove, tx.Tx.Input.Address, tx.Tx.Input.Amount, txData)
 			// move from originalPartition to partitionToGo
-			move2TxResponse := NewTxResponse("move2", partitionToGo, id, tx.Signer, accountToMove, tx.Tx.Input.Address, tx.Tx.Input.Amount, txData)
+			move2TxResponse := NewTxResponse("move2", partitionToGo, id, tx.Signer, *accountToMove, tx.Tx.Input.Address, tx.Tx.Input.Amount, txData)
 
 			txResponses = append(txResponses, moveToTxResponse)
 			txResponses = append(txResponses, move2TxResponse)

@@ -2,8 +2,9 @@ package partitioning
 
 import "github.com/enriquefynn/sharding-runner/burrow-client/config"
 
+// Partitions start at 1 to nPartitions inclusive
 type Partitioning interface {
-	Add(k int64)
+	Add(k int64) int64 // Return partition added
 	Get(k int64) int64
 	IsSame(keys ...int64) bool
 	Move(k, m int64)
@@ -24,10 +25,12 @@ func NewHashPartitioning(nPartitions int64) *HashPartitioning {
 	}
 }
 
-func (hp *HashPartitioning) Add(k int64) {
-	partition := k % hp.nPartitions
-	hp.partitionMap[k] = k % partition
+func (hp *HashPartitioning) Add(k int64) int64 {
+	// Partitions start at 1
+	partition := k%hp.nPartitions + 1
+	hp.partitionMap[k] = partition
 	hp.elementsInEachPartition[partition]++
+	return partition
 }
 
 func (hp *HashPartitioning) Get(k int64) int64 {
@@ -50,8 +53,15 @@ func (hp *HashPartitioning) Move(k, m int64) {
 
 func (hp *HashPartitioning) WhereToMove(keys ...int64) int64 {
 	moveToPartition := hp.Get(keys[0])
+	if moveToPartition == 0 {
+		moveToPartition = hp.Add(keys[0])
+	}
 	for _, k := range keys[1:] {
+
 		partitionK := hp.Get(k)
+		if partitionK == 0 {
+			partitionK = hp.Add(k)
+		}
 		if hp.elementsInEachPartition[moveToPartition] > hp.elementsInEachPartition[partitionK] {
 			moveToPartition = partitionK
 		}

@@ -1,2 +1,10 @@
 burrow/bin
 burrow/test_chain
+db_client
+tendermint
+go-ethereum-client/tx-extractor/read
+geth-client/db
+shard*
+burrow/chain_*
+.*~
+burrow/.keys

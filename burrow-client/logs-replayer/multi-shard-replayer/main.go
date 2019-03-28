@@ -3,12 +3,16 @@ package main
 import (
 	"io/ioutil"
 	"os"
+	"reflect"
 	"time"
 
-	"github.com/hyperledger/burrow/crypto"
-	"github.com/hyperledger/burrow/execution/exec"
-
 	"github.com/hyperledger/burrow/acm"
+	"github.com/hyperledger/burrow/execution/exec"
+	"github.com/hyperledger/burrow/rpc/rpcquery"
+	yaml "gopkg.in/yaml.v2"
+
+	"github.com/hyperledger/burrow/crypto"
+
 	"github.com/hyperledger/burrow/deploy/def"
 
 	"github.com/enriquefynn/sharding-runner/burrow-client/config"
@@ -16,7 +20,6 @@ import (
 	"github.com/enriquefynn/sharding-runner/burrow-client/logs-replayer/partitioning"
 	"github.com/enriquefynn/sharding-runner/burrow-client/logs-replayer/utils"
 	"github.com/sirupsen/logrus"
-	yaml "gopkg.in/yaml.v2"
 )
 
 func checkFatalError(err error) {
@@ -25,29 +28,51 @@ func checkFatalError(err error) {
 	}
 }
 
-func clientEmitter(config *config.Config, client *def.Client, logsReader *logsreader.LogsReader, blockChan chan *exec.BlockExecution) {
+func clientEmitter(config *config.Config, contractsMap []*crypto.Address, clients []*def.Client,
+	logsReader *logsreader.LogsReader, blockChans []chan *rpcquery.SignedHeadersResult) {
+	logrus.Infof("BEGIN")
+
 	// Partitioning
 	var partitioning = partitioning.GetPartitioning(config)
 	// Txs streamer
 	txsChan := logsReader.LogsLoader()
 	// Mapping for kittens ids to address
-	idMap := make(map[int64]crypto.Address)
+	idMap := make(map[int64]*crypto.Address)
 
 	// Number of simultaneous txs allowed
 	outstandingTxs := config.Benchmark.OutstandingTxs
 
 	// SentTx that are not received
-	sentTxs := make(map[string]*logsreader.TxResponse)
+	var sentTxs []map[string]*logsreader.TxResponse
+	// for range blockChan {
+	// 	sentTxs = append(sentTxs, make(map[string]*logsreader.TxResponse))
+	// }
+	sentTxs = append(sentTxs, make(map[string]*logsreader.TxResponse))
+	totalOngoingTxs := 0
 
 	// Dependency graph
 	dependencyGraph := utils.NewDependencies()
 
+	// Aux functions
 	sendTx := func(tx *logsreader.TxResponse) {
-		logsReader.ChangeIDsMultiShard(tx, idMap)
+		logsReader.ChangeIDsMultiShard(tx, idMap, contractsMap)
 		signedTx := tx.Sign()
-		_, err := client.BroadcastEnvelopeAsync(signedTx)
+		_, err := clients[tx.PartitionIndex].BroadcastEnvelopeAsync(signedTx)
 		checkFatalError(err)
-		sentTxs[string(signedTx.Tx.Hash())] = tx
+		sentTxs[tx.PartitionIndex][string(signedTx.Tx.Hash())] = tx
+	}
+
+	addToDependenciesAndSend := func(tx *logsreader.TxResponse) bool {
+		totalOngoingTxs++
+		moveTxPairs := logsReader.CreateMoveDecidePartitioning(tx, partitioning, idMap)
+		for _, moveTx := range moveTxPairs {
+			dependencyGraph.AddDependency(moveTx)
+		}
+		shouldWait := dependencyGraph.AddDependency(tx)
+		if !shouldWait {
+			sendTx(tx)
+		}
+		return shouldWait
 	}
 
 	// First txs
@@ -56,29 +81,28 @@ func clientEmitter(config *config.Config, client *def.Client, logsReader *logsre
 		if !chOpen {
 			break
 		}
-		// logrus.Infof("SENDING: %v", txResponse.methodName)
-		// Should we move this thing?
-		// moveTxs := logsReader.CreateMoveTx(txResponse, partitioning, idMap)
-		shouldWait := dependencyGraph.AddDependency(txResponse, partitioning)
-		if !shouldWait {
-			sendTx(txResponse)
-		}
+		// logrus.Infof("SENDING: %v", txResponse.MethodName)
+		addToDependenciesAndSend(txResponse)
+	}
+
+	cases := make([]reflect.SelectCase, len(blockChans))
+	for i, ch := range blockChans {
+		cases[i] = reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(ch)}
 	}
 
 	for {
-		sentTxsThisRound := 0
-		if len(sentTxs) == 0 {
-			break
-		}
-		block := <-blockChan
-		logrus.Infof("RECEIVED BLOCK %v", block.Header.Height)
+		partitionID, selectValue, _ := reflect.Select(cases)
+		signedBlock := selectValue.Interface().(*rpcquery.SignedHeadersResult)
+
+		// signedBlock := <-blockChans[partitionID]
+		logrus.Infof("RECEIVED BLOCK %v from partition %v", signedBlock.SignedHeader.Height, partitionID)
 		logrus.Infof("Dependencies: %v", dependencyGraph.Length)
 		// dependencyGraph.bfs()
-		for _, tx := range block.TxExecutions {
+		for _, tx := range signedBlock.TxExecutions {
 			txHash := string(tx.TxHash)
 			// Found tx
-			if sentTx, ok := sentTxs[txHash]; ok {
-				// logrus.Infof("Executing: %v %v", sentTx.method, sentTx.ids)
+			if sentTx, ok := sentTxs[partitionID][txHash]; ok {
+				// logrus.Infof("Executing: %v %v", sentTx.MethodName, sentTx.OriginalIds)
 				if tx.Exception != nil {
 					logrus.Fatalf("Exception happened %v executing %v %v", tx.Exception, sentTx.MethodName, sentTx.OriginalIds)
 				}
@@ -88,6 +112,7 @@ func clientEmitter(config *config.Config, client *def.Client, logsReader *logsre
 				if sentTx.MethodName == "createPromoKitty" || sentTx.MethodName == "giveBirth" {
 					var event *exec.Event
 
+					// Get the Birth event (1st not null event)
 					for _, ev := range tx.Events {
 						if ev.Log != nil {
 							event = ev
@@ -97,32 +122,32 @@ func clientEmitter(config *config.Config, client *def.Client, logsReader *logsre
 					idMap[int64(sentTx.OriginalBirthID)] = logsReader.ExtractNewContractAddress(event)
 				}
 
-				delete(sentTxs, txHash)
+				totalOngoingTxs--
+				delete(sentTxs[partitionID], txHash)
 				if len(freedTxs) != 0 {
 					for freedTx := range freedTxs {
 						// logrus.Infof("Sending blocked tx: %v (%v)", freedTx.methodName, freedTx.originalIds)
 						sendTx(freedTx)
-						sentTxsThisRound++
 					}
 				}
 			}
 		}
 		added := 0
-		for len(sentTxs) < outstandingTxs {
-			added++
+		numTxsSent := 0
+		for pID := range blockChans {
+			numTxsSent += len(sentTxs[pID])
+		}
+		for numTxsSent < outstandingTxs {
+			numTxsSent++
 			txResponse, chOpen := <-txsChan
 			if !chOpen {
 				logrus.Warnf("No more txs in channel")
 				break
 			}
-			shouldWait := dependencyGraph.AddDependency(txResponse, partitioning)
-			if !shouldWait {
-				// logrus.Infof("Sending tx: %v (%v)", txResponse.methodName, txResponse.originalIds)
-				sendTx(txResponse)
-				sentTxsThisRound++
-			}
+			// Should we move this thing?
+			addToDependenciesAndSend(txResponse)
 		}
-		logrus.Infof("Last sentTxs %v, sent this round %v, received %v", len(sentTxs), sentTxsThisRound, len(block.TxExecutions))
+		logrus.Infof("Last sentTxs %v added: %v", len(sentTxs[partitionID]), added)
 		// logrus.Infof("Added: %v SentTxs: %v", added, len(sentTxs))
 		// logrus.Infof("Sent this round: %v", sentTxsThisRound)
 	}
@@ -138,28 +163,69 @@ func main() {
 	logs, err := utils.NewLog(config.Logs.Dir)
 	checkFatalError(err)
 
-	// Chain id: 1
-	logsReader := logsreader.CreateLogsReader(config.Benchmark.ChainID, config.Contracts.ReplayTransactionsPath, config.Contracts.CKABI, config.Contracts.KittyABI)
-
+	logsReader := logsreader.CreateLogsReader(config.Contracts.ReplayTransactionsPath, config.Contracts.CKABI, config.Contracts.KittyABI)
 	defaultAccount := acm.SigningAccounts([]*acm.PrivateAccount{acm.GeneratePrivateAccountFromSecret("0")})
-	client := def.NewClientWithLocalSigning(config.Benchmark.Address, time.Duration(config.Benchmark.Timeout)*time.Second, defaultAccount)
 
-	// Deploy Genes contract
-	address, err := utils.CreateContract(&config, logsReader, client, config.Contracts.GenePath)
-	checkFatalError(err)
-	logrus.Infof("Deployed GeneScience at: %v", address)
+	// numberOfPartitions := config.Partitioning.NumberPartitions
+	// Clients in partitions
+	var clients []*def.Client
+	var blockChans []chan *rpcquery.SignedHeadersResult
+	// Mapping for partition to created contracts address
+	var contractsMap []*crypto.Address
+
+	for part, c := range config.Servers {
+		clients = append(clients, def.NewClientWithLocalSigning(c.Address, time.Duration(config.Benchmark.Timeout)*time.Second, defaultAccount))
+
+		// Deploy Genes contract
+		address, err := utils.CreateContract(c.ChainID, &config, logsReader, clients[part], config.Contracts.GenePath)
+		checkFatalError(err)
+		logrus.Infof("Deployed GeneScience at: %v", address)
+		address, err = utils.CreateContract(c.ChainID, &config, logsReader, clients[part], config.Contracts.Path, address)
+		logrus.Infof("Deployed CK in partition %v at: %v", c.ChainID, address)
+		// Set CK address to contractsMap[partition]
+		contractsMap = append(contractsMap, address)
+		logsReader.Advance(2)
+		checkFatalError(err)
+
+		// Deploy CK contract
+
+		blockChans = append(blockChans, make(chan *rpcquery.SignedHeadersResult))
+	}
 
 	// Deploy CK contract
-	address, err = utils.CreateContract(&config, logsReader, client, config.Contracts.Path, address)
-	logsReader.Advance(2)
-	checkFatalError(err)
-	logrus.Infof("Deployed CK at: %v", address)
-	logsReader.SetContractAddr(address)
+	go utils.ListenBlockHeaders(clients[0], logs, blockChans[0])
+	clientEmitter(&config, contractsMap, clients, logsReader, blockChans)
 
-	blockChan := make(chan *exec.BlockExecution)
+	// config := config.Config{}
+	// configFile, err := ioutil.ReadFile(os.Args[1])
+	// checkFatalError(err)
+	// err = yaml.Unmarshal(configFile, &config)
+	// checkFatalError(err)
 
-	go utils.ListenBlockHeaders(client, logs)
-	go utils.ListenBlocks(client, blockChan)
+	// logs, err := utils.NewLog(config.Logs.Dir)
+	// checkFatalError(err)
 
-	clientEmitter(&config, client, logsReader, blockChan)
+	// // Chain id: 1
+	// logsReader := logsreader.CreateLogsReader(config.Contracts.ReplayTransactionsPath, config.Contracts.CKABI, config.Contracts.KittyABI)
+
+	// defaultAccount := acm.SigningAccounts([]*acm.PrivateAccount{acm.GeneratePrivateAccountFromSecret("0")})
+	// client := def.NewClientWithLocalSigning(config.Servers[0].Address, time.Duration(config.Benchmark.Timeout)*time.Second, defaultAccount)
+
+	// // Deploy Genes contract
+	// address, err := utils.CreateContract("1", &config, logsReader, client, config.Contracts.GenePath)
+	// checkFatalError(err)
+	// logrus.Infof("Deployed GeneScience at: %v", address)
+
+	// // Deploy CK contract
+	// address, err = utils.CreateContract("1", &config, logsReader, client, config.Contracts.Path, address)
+	// logsReader.Advance(2)
+	// checkFatalError(err)
+	// logrus.Infof("Deployed CK at: %v", address)
+	// logsReader.SetContractAddr(address)
+
+	// blockChan := make(chan *rpcquery.SignedHeadersResult)
+
+	// go utils.ListenBlockHeaders(client, logs, blockChan)
+	// contractsMap := []*crypto.Address{address}
+	// clientEmitter(&config, contractsMap, client, logsReader, blockChan)
 }

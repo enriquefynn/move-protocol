@@ -15,15 +15,17 @@ contracts:
   # address: "0000000000000000000000000000000000000000"
 
 benchmark:
-  chainID: "1"
   clients: 1
   timeout: 10
-  address: "127.0.0.1:20002"
   outstandingTxs: 300
 
+servers:
+  - chainID: "1"
+    address: "127.0.0.1:20002"
+
 partitioning:
+  numberPartitions: 1
   type: "hash"
-  numberPartitions: 2
 
 logs:
   dir: "./data/logs/"

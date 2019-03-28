@@ -37,7 +37,7 @@ type LogsReader struct {
 	Accounts
 }
 
-func CreateLogsReader(chainID string, path string, abiPath string, kittyABIPath string) *LogsReader {
+func CreateLogsReader(path string, abiPath string, kittyABIPath string) *LogsReader {
 	file, err := os.Open(path)
 	fatalError(err)
 	// CK ABI
@@ -59,7 +59,6 @@ func CreateLogsReader(chainID string, path string, abiPath string, kittyABIPath 
 		abi:        ckABI,
 		kittyABI:   kittyABI,
 		Accounts: Accounts{
-			chainID:    chainID,
 			accountMap: make(map[common.Address]*SeqAccount),
 			allowedMap: make(map[crypto.Address]map[int64]common.Address),
 			tokenMap:   make(map[int64]common.Address),
@@ -78,6 +77,7 @@ func (lr *LogsReader) Advance(n int) {
 }
 
 type TxResponse struct {
+	PartitionIndex  int
 	ChainID         string
 	Tx              *payload.CallTx
 	Signer          *SeqAccount
@@ -186,15 +186,12 @@ func (lr *LogsReader) LogsLoader() chan *TxResponse {
 	go func() {
 		for {
 			txResponse := TxResponse{
-				ChainID: lr.chainID,
+				Tx: &payload.CallTx{
+					Address:  lr.contractAddr,
+					Fee:      1,
+					GasLimit: 4100000000,
+				},
 			}
-
-			txResponse.Tx = &payload.CallTx{
-				Address:  lr.contractAddr,
-				Fee:      1,
-				GasLimit: 4100000000,
-			}
-
 			line, err := lr.logsReader.ReadString('\n')
 			if len(line) == 0 || err != nil {
 				close(txsChan)
@@ -248,13 +245,11 @@ func (lr *LogsReader) LogsLoader() chan *TxResponse {
 				// Should call approveSiring(address _addr, uint256 _sireId)
 				if bytes.Compare(lr.tokenMap[sireID].Bytes(), owner.Bytes()) != 0 {
 					approveSiringTx := TxResponse{
-						ChainID: lr.chainID,
-					}
-
-					approveSiringTx.Tx = &payload.CallTx{
-						Address:  lr.contractAddr,
-						Fee:      1,
-						GasLimit: 4100000000,
+						Tx: &payload.CallTx{
+							Address:  lr.contractAddr,
+							Fee:      1,
+							GasLimit: 4100000000,
+						},
 					}
 					simulatedSireOwner := lr.getOrCreateAccount(lr.tokenMap[sireID])
 					approveSiringTx.Signer = simulatedSireOwner
@@ -346,7 +341,6 @@ type SeqAccount struct {
 }
 
 type Accounts struct {
-	chainID       string
 	accountMap    map[common.Address]*SeqAccount
 	lastAccountID int
 	allowedMap    map[crypto.Address]map[int64]common.Address
@@ -391,7 +385,7 @@ func (ac *Accounts) isAllowed(addr crypto.Address, tokenID int64) bool {
 }
 
 // CreateContract creates a contract with the binary in path
-func (lr *LogsReader) CreateContract(codePath string, args ...interface{}) (*txs.Envelope, error) {
+func (lr *LogsReader) CreateContract(chainID, codePath string, args ...interface{}) (*txs.Envelope, error) {
 	var byteArgs []byte
 	var err error
 	if len(args) != 0 {
@@ -423,7 +417,7 @@ func (lr *LogsReader) CreateContract(codePath string, args ...interface{}) (*txs
 		GasLimit: 4100000000,
 	})
 
-	env := txs.Enclose(lr.chainID, tx)
+	env := txs.Enclose(chainID, tx)
 	err = env.Sign(acc.account)
 	acc.sequence++
 
