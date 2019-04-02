@@ -6,12 +6,13 @@ import (
 
 	"github.com/enriquefynn/sharding-runner/burrow-client/logs-replayer/partitioning"
 	"github.com/hyperledger/burrow/crypto"
+	"github.com/hyperledger/burrow/dependencies"
 	"github.com/hyperledger/burrow/execution/exec"
 	"github.com/hyperledger/burrow/txs/payload"
 	"github.com/sirupsen/logrus"
 )
 
-func (lr *LogsReader) ChangeIDsMultiShard(txResponse *TxResponse, idMap map[int64]*crypto.Address, contractsMap []*crypto.Address) {
+func (lr *LogsReader) ChangeIDsMultiShard(txResponse *dependencies.TxResponse, idMap map[int64]*crypto.Address, contractsMap []*crypto.Address) {
 	txResponse.Tx.Address = contractsMap[int64(txResponse.PartitionIndex)]
 
 	if txResponse.MethodName == "createPromoKitty" {
@@ -67,6 +68,10 @@ func (lr *LogsReader) ChangeIDsMultiShard(txResponse *TxResponse, idMap map[int6
 			txInput, err := lr.kittyABI.Methods["transferFrom"].Inputs.Pack(txResponse.AddressArgument[1])
 			fatalError(err)
 			txResponse.Tx.Data = append(lr.kittyABI.Methods["transferFrom"].Id(), txInput...)
+		} else if txResponse.MethodName == "moveTo" || txResponse.MethodName == "move2" {
+			// Signer is the token owner
+			txResponse.Signer = lr.AccountMap[lr.TokenOwnerMap[tokenID]]
+			txResponse.Tx.Input.Address = txResponse.Signer.Account.GetAddress()
 
 		} else {
 			logrus.Fatalf("Method not found %v", txResponse.MethodName)
@@ -78,29 +83,35 @@ func (lr *LogsReader) ExtractNewContractAddress(event *exec.Event) *crypto.Addre
 	addr := crypto.MustAddressFromBytes(event.Log.Data[12:32])
 	return &addr
 }
+func (lr *LogsReader) ExtractKittyID(event *exec.Event) int64 {
+	id := big.NewInt(0)
+	id.SetBytes(event.Log.Data[64:96])
+	return id.Int64()
+}
 
-func NewTxResponse(methodName string, chainID, originalID int64, signer *SeqAccount, to, from crypto.Address, amount uint64, data []byte) *TxResponse {
+func NewTxResponse(methodName string, chainID, originalID int64, amount uint64, data []byte) *dependencies.TxResponse {
+	logrus.Infof("CREATE MOVE: %v chainID: %v", methodName, chainID)
 	newTx := payload.CallTx{
 		Input: &payload.TxInput{
-			Address: from,
-			Amount:  amount,
+			// Address: from,
+			Amount: amount,
 		},
-		Address:  &to,
+		// Address:  &to,
 		Fee:      1,
 		GasLimit: 4100000000,
 		Data:     data,
 	}
-	return &TxResponse{
-		ChainID:     strconv.Itoa(int(chainID)),
-		Tx:          &newTx,
-		Signer:      signer,
-		MethodName:  methodName,
-		OriginalIds: []int64{originalID},
+	return &dependencies.TxResponse{
+		PartitionIndex: int(chainID - 1),
+		ChainID:        strconv.Itoa(int(chainID)),
+		Tx:             &newTx,
+		MethodName:     methodName,
+		OriginalIds:    []int64{originalID},
 	}
 
 }
-func (lr *LogsReader) CreateMoveDecidePartitioning(tx *TxResponse, partitioning partitioning.Partitioning, idMap map[int64]*crypto.Address) []*TxResponse {
-	var txResponses []*TxResponse
+func (lr *LogsReader) CreateMoveDecidePartitioning(tx *dependencies.TxResponse, partitioning partitioning.Partitioning) []*dependencies.TxResponse {
+	var txResponses []*dependencies.TxResponse
 	var partitioningObjects []int64
 
 	if len(tx.OriginalIds) == 3 {
@@ -115,6 +126,7 @@ func (lr *LogsReader) CreateMoveDecidePartitioning(tx *TxResponse, partitioning 
 	// set the partition to go tx
 	tx.PartitionIndex = int(partitionToGo - 1)
 	tx.ChainID = strconv.Itoa(tx.PartitionIndex + 1)
+	logrus.Infof("Sending %v to %v", tx.MethodName, tx.ChainID)
 	if !shouldMove {
 		// No need to move
 		return nil
@@ -129,17 +141,16 @@ func (lr *LogsReader) CreateMoveDecidePartitioning(tx *TxResponse, partitioning 
 			fatalError(err)
 			txData := append(lr.kittyABI.Methods["moveTo"].Id(), txInput...)
 
-			accountToMove := idMap[id]
+			// accountToMove := idMap[id]
+			// logrus.Infof("ACCOUNT TO MOVE: %v", accountToMove)
 			// move from originalPartition to partitionToGo
-			moveToTxResponse := NewTxResponse("moveTo", originalPartition, id, tx.Signer, *accountToMove, tx.Tx.Input.Address, tx.Tx.Input.Amount, txData)
-			// move from originalPartition to partitionToGo
-			move2TxResponse := NewTxResponse("move2", partitionToGo, id, tx.Signer, *accountToMove, tx.Tx.Input.Address, tx.Tx.Input.Amount, txData)
+			moveToTxResponse := NewTxResponse("moveTo", originalPartition, id, tx.Tx.Input.Amount, txData)
+			// move2 to partitionToGo
+			partitioning.Move(id, partitionToGo)
+			move2TxResponse := NewTxResponse("move2", partitionToGo, id, tx.Tx.Input.Amount, txData)
 
 			txResponses = append(txResponses, moveToTxResponse)
 			txResponses = append(txResponses, move2TxResponse)
-
-			logrus.Infof("Moving %v from %v to %v", accountToMove, originalPartition, partitionToGo)
-
 		}
 	}
 	return txResponses

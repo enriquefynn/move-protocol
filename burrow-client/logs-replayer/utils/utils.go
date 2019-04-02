@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/hyperledger/burrow/rpc/rpcquery"
+	// "github.com/tendermint/tendermint/types"
 
 	"github.com/enriquefynn/sharding-runner/burrow-client/config"
 	"github.com/enriquefynn/sharding-runner/burrow-client/logs-replayer/logsreader"
@@ -14,7 +15,7 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-func ListenBlockHeaders(client *def.Client, logs *Log, blockChan chan<- *rpcquery.SignedHeadersResult) {
+func ListenBlockHeaders(partition string, client *def.Client, logs *Log, blockChan chan<- *rpcquery.SignedHeadersResult) {
 	defer func() { logs.Close() }()
 	end := rpcevents.StreamBound()
 
@@ -35,7 +36,9 @@ func ListenBlockHeaders(client *def.Client, logs *Log, blockChan chan<- *rpcquer
 		}
 		if commence {
 			blockChan <- resp
-			logs.Log("tput", "%d %d\n", resp.SignedHeader.TotalTxs, resp.SignedHeader.Time.UnixNano())
+			logrus.Infof("---------GOT BLOCK %v from partition %v %v %v root hash: %v, storage hash: %v",
+				resp.SignedHeader.Height, partition, resp.SignedHeader.TotalTxs, resp.SignedHeader.Time.UnixNano(), resp.SignedHeader.Hash(), resp.SignedHeader.AppHash)
+			logs.Log("tput-partition-"+partition, "%d %d\n", resp.SignedHeader.TotalTxs, resp.SignedHeader.Time.UnixNano())
 			logs.Flush()
 			// if resp.SignedHeader.NumTxs == 0 {
 			// 	closing++
@@ -87,92 +90,4 @@ func checkFatalError(err error) {
 	if err != nil {
 		logrus.Fatalf("Error: %v", err)
 	}
-}
-
-type Node struct {
-	child map[int64]*Node
-	tx    *logsreader.TxResponse
-}
-
-type Dependencies struct {
-	Length int
-	idDep  map[int64]*Node
-}
-
-func (dp *Dependencies) bfs() {
-	// visited := make(map[*Node]bool)
-	for k := range dp.idDep {
-		fmt.Printf("%v ", k)
-	}
-	fmt.Printf("\n")
-}
-
-func NewDependencies() *Dependencies {
-	return &Dependencies{
-		idDep: make(map[int64]*Node),
-	}
-}
-
-// AddDependency add a dependency and return if is allowed to send tx
-func (dp *Dependencies) AddDependency(tx *logsreader.TxResponse) bool {
-
-	newNode := &Node{
-		tx:    tx,
-		child: make(map[int64]*Node),
-	}
-	dp.Length++
-
-	shouldWait := false
-	for _, dependency := range tx.OriginalIds {
-		if _, ok := dp.idDep[dependency]; !ok {
-			// logrus.Infof("Adding dependency: %v -> %v (%v)", dependency, newNode.tx.methodName, newNode.tx.originalIds)
-			dp.idDep[dependency] = newNode
-		} else {
-			shouldWait = true
-			father := dp.idDep[dependency]
-			// "recursive" insert dependency
-			for {
-				if father.child[dependency] == nil {
-					// logrus.Infof("Adding dependency: %v (%v) -> %v (%v)", father, father.tx.methodName, newNode.tx.methodName, newNode.tx.originalIds)
-					father.child[dependency] = newNode
-					break
-				}
-				father = father.child[dependency]
-			}
-		}
-	}
-	return shouldWait
-}
-
-func (dp *Dependencies) canSend(cameFromID int64, blockedTx *Node) bool {
-	for _, otherID := range blockedTx.tx.OriginalIds {
-		if otherID != cameFromID {
-			// Can send?
-			if dp.idDep[otherID] != blockedTx {
-				return false
-			}
-		}
-	}
-	return true
-}
-
-func (dp *Dependencies) RemoveDependency(dependencies []int64) map[*logsreader.TxResponse]bool {
-	dp.Length--
-	returnedDep := make(map[*logsreader.TxResponse]bool)
-
-	for _, dependency := range dependencies {
-		blockedTx := dp.idDep[dependency].child[dependency]
-		// Delete response
-		delete(dp.idDep, dependency)
-		if blockedTx != nil {
-			// Should wait for it
-			dp.idDep[dependency] = blockedTx
-			// Can execute next?
-			if dp.canSend(dependency, blockedTx) {
-				// logrus.Infof("RETURNING %v", blockedTx.tx)
-				returnedDep[blockedTx.tx] = true
-			}
-		}
-	}
-	return returnedDep
 }

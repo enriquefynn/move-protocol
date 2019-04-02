@@ -29,6 +29,7 @@ contract Breeder {
     GeneScience geneScience;
     constructor(GeneScience _geneScience) public {
         geneScience = _geneScience;
+        _createKitty(Kitty(0), Kitty(0), 0, uint256(-1), address(0));
     }
 
     function _isValidMatingPair(
@@ -40,29 +41,29 @@ contract Breeder {
         returns(bool)
     {
         // A Kitty can't breed with itself!
-        if (_matron.kittyId() == _sire.kittyId()) {
+        if (_matron == _sire) {
             return false;
         }
 
         // Kitties can't breed with their parents.
-        if (_matron.matronId() == _sire.kittyId() || _matron.sireId() == _sire.kittyId()) {
+        if (_matron.matronAddress() == _sire || _matron.sireAddress() == _sire) {
             return false;
         }
-        if (_sire.matronId() == _matron.kittyId() || _sire.sireId() == _matron.kittyId()) {
+        if (_sire.matronAddress() == _matron || _sire.sireAddress() == _matron) {
             return false;
         }
 
         // We can short circuit the sibling check (below) if either cat is
         // gen zero (has a matron ID of zero).
-        if (_sire.matronId() == 0 || _matron.matronId() == 0) {
+        if (address(_sire.matronAddress()) == address(0) || address(_matron.matronAddress()) == address(0)) {
             return true;
         }
 
         // Kitties can't breed with full or half siblings.
-        if (_sire.matronId() == _matron.matronId() || _sire.matronId() == _matron.sireId()) {
+        if (_sire.matronAddress() == _matron.matronAddress() || _sire.matronAddress() == _matron.sireAddress()) {
             return false;
         }
-        if (_sire.sireId() == _matron.matronId() || _sire.sireId() == _matron.sireId()) {
+        if (_sire.sireAddress() == _matron.matronAddress() || _sire.sireAddress() == _matron.sireAddress()) {
             return false;
         }
 
@@ -97,13 +98,15 @@ contract Breeder {
         require(matronOwner == sire.owner() || sire.sireAllowedToAddress() == matronOwner);
 
         // Make sure matron isn't pregnant, or in the middle of a siring cooldown
-        require(matron.siringWithId() == 0);
+        require(address(matron.siringWithAddress()) == address(0));
+        // require(matron.siringGeneration() == 0);
 
         // Make sure sire isn't pregnant, or in the middle of a siring cooldown
-        require(sire.siringWithId() == 0);
+        require(address(sire.siringWithAddress()) == address(0));
+        // require(sire.siringGeneration() == 0);
 
         // Test that these cats are a valid mating pair.
-        // require(_isValidMatingPair(matron, sire));
+        require(_isValidMatingPair(matron, sire));
 
         // All checks passed, kitty gets pregnant!
         matron.matronBreedWith(sire);
@@ -111,8 +114,8 @@ contract Breeder {
     }
 
     function _createKitty(
-        uint256 _matronId,
-        uint256 _sireId,
+        Kitty _matronAddress,
+        Kitty _sireAddress,
         uint256 _generation,
         uint256 _genes,
         address _owner
@@ -124,8 +127,8 @@ contract Breeder {
         // sure that these conditions are never broken. However! _createKitty() is already
         // an expensive call (for storage), and it doesn't hurt to be especially careful
         // to ensure our data structures are always valid.
-        require(_matronId == uint256(uint32(_matronId)));
-        require(_sireId == uint256(uint32(_sireId)));
+        // require(_matronId == uint256(uint32(_matronId)));
+        // require(_sireId == uint256(uint32(_sireId)));
         require(_generation == uint256(uint16(_generation)));
 
         // // New kitty starts with the same cooldown as parent gen/2
@@ -134,7 +137,7 @@ contract Breeder {
         //     cooldownIndex = 13;
         // }
 
-        Kitty kitten = new Kitty(lastId, _matronId, _sireId, _generation, _genes, _owner);
+        Kitty kitten = new Kitty(lastId, _matronAddress, _sireAddress, _generation, _genes, _owner);
 
         // It's probably never going to happen, 4 billion cats is A LOT, but
         // let's just be 100% sure we never let this happen.
@@ -146,14 +149,14 @@ contract Breeder {
 
     // TODO: Make private
     function createPromoKitty(uint256 _genes, address _owner) external {
-        _createKitty(0, 0, 0, _genes, _owner);
+        _createKitty(Kitty(0), Kitty(0), 0, _genes, _owner);
     }
 
     function giveBirth(Kitty matron) external returns(Kitty) {
         // TODO: Verify that matron was created by me
 
         // Check that the matron is pregnant, and that its time has come!
-        require(matron.siringWithId() != 0);
+        require(address(matron.siringWithAddress()) != address(0));
 
         uint16 parentGen = matron.generation();
         if (matron.siringGeneration() > matron.generation()) {
@@ -161,7 +164,7 @@ contract Breeder {
         }
         uint256 childGenes = 1;
 
-        Kitty kitten = _createKitty(matron.kittyId(), matron.siringWithId(), parentGen + 1, childGenes, matron.owner());
+        Kitty kitten = _createKitty(matron, matron.siringWithAddress(), parentGen + 1, childGenes, matron.owner());
         matron.completeBirth();
 
         // return the new kitten's address
@@ -175,9 +178,10 @@ contract Kitty is SERC721 {
     uint256 public genes;
     uint64 public birthTime;
     uint64 public cooldownEndBlock;
-    uint32 public matronId;
-    uint32 public sireId;
-    uint32 public siringWithId;
+    Kitty public matronAddress;
+    Kitty public sireAddress;
+    Kitty public siringWithAddress;
+
     uint16 public siringGeneration;
     uint16 public cooldownIndex;
     uint16 public generation;
@@ -191,8 +195,8 @@ contract Kitty is SERC721 {
         require(msg.sender == owner);
         _;
     }
-    event Birth(address kittyAddress, address owner, uint32 kittyId, uint32 matronId, uint32 sireId, uint256 genes);
-    event Pregnant(address owner, uint256 matronId, uint256 sireId, uint256 cooldownEndBlock);
+    event Birth(address kittyAddress, address owner, uint32 kittyId, Kitty matronAddress, Kitty sireAddress, uint256 genes);
+    event Pregnant(address owner, Kitty matronAddress, Kitty sireAddress, uint256 cooldownEndBlock);
 
     function moveTo(uint _toShard) external {
         assembly {
@@ -202,8 +206,8 @@ contract Kitty is SERC721 {
 
     constructor(
         uint256 _kittyId,
-        uint256 _matronId,
-        uint256 _sireId,
+        Kitty _matronAddress,
+        Kitty _sireAddress,
         uint256 _generation,
         uint256 _genes,
         address _owner
@@ -224,8 +228,8 @@ contract Kitty is SERC721 {
 
         cooldownEndBlock = 0;
         kittyId = uint32(_kittyId);
-        matronId = uint32(_matronId);
-        sireId = uint32(_sireId);
+        matronAddress = _matronAddress;
+        sireAddress = _sireAddress;
         genes = _genes;
         owner = _owner;
         cooldownIndex = _cooldownIndex;
@@ -239,8 +243,8 @@ contract Kitty is SERC721 {
             address(this),
             owner,
             kittyId,
-            matronId,
-            sireId,
+            matronAddress,
+            sireAddress,
             genes
         );
 
@@ -251,16 +255,15 @@ contract Kitty is SERC721 {
 
     function completeBirth() public {
         // TODO: Breeder should be the only one to call this 
-
-        delete siringWithId;
+        delete siringWithAddress;
         delete siringGeneration;
     }
     
     function matronBreedWith(Kitty sire) public {
         // TODO: Breeder should be the only one to call this
 
-        // Mark the matron as pregnant, keeping track of who the sire is.
-        siringWithId = uint32(sire.kittyId());
+        // Mark the matron as pregnant, keeping track of the siring generation.
+        siringWithAddress = sire;
         siringGeneration = uint16(sire.generation());
 
         // Trigger the cooldown for both parents.
@@ -276,7 +279,7 @@ contract Kitty is SERC721 {
         // pregnantKitties++;
 
         // Emit the pregnancy event.
-        emit Pregnant(owner, matronId, sire.kittyId(), cooldownEndBlock);
+        emit Pregnant(owner, matronAddress, sireAddress, cooldownEndBlock);
     }
 
     function sireBreedWith() public {
