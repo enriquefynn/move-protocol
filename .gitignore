@@ -8,3 +8,16 @@ shard*
 burrow/chain_*
 .*~
 burrow/.keys
+
+binaries
+.vscode
+data/
+
+# Binaries
+multi-shard-replayer
+single-shard-replayer
+generate
+geth-client
+
+# Scripts
+*.sh

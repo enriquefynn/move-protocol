@@ -224,6 +224,7 @@ contract Kitty is SERC721 {
             cooldownIndex = 13;
         }
 
+        // TODO: FIX WHEN STABLE
         birthTime = uint64(now);
 
         cooldownEndBlock = 0;

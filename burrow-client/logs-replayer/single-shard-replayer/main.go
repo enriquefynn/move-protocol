@@ -31,26 +31,6 @@ type methodAndID struct {
 }
 
 func clientEmitter(config *utils.Config, client *def.Client, logsReader *logsreader.LogsReader, blockChan chan *exec.BlockExecution) {
-	// txsChan := logsReader.LogsLoader()
-	// txs := 0
-	// for {
-	// 	txs++
-	// 	txResponse := <-txsChan
-	// 	signedTx := txResponse.Sign()
-	// 	if txs < 3000 {
-	// 		_, err := client.BroadcastEnvelopeAsync(signedTx)
-	// 		fatalError(err)
-	// 		continue
-	// 	}
-	// 	logrus.Infof("Executing %v %v", txResponse.methodName, txResponse.originalIds)
-
-	// 	r, err := client.BroadcastEnvelope(signedTx)
-	// 	if r.Exception != nil {
-	// 		logrus.Fatalf("Exception happened %v executing %v %v", r.Exception, txResponse.methodName, txResponse.originalIds)
-	// 	}
-	// 	fatalError(err)
-	// }
-
 	// Txs streamer
 	txsChan := logsReader.LogsLoader()
 	// Mapping for kittens ids

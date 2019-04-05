@@ -43,10 +43,14 @@ func clientEmitter(config *config.Config, contractsMap []*crypto.Address, client
 	// Number of simultaneous txs allowed
 	outstandingTxs := config.Benchmark.OutstandingTxs
 
+	// Signed Headers (Have to wait N + 2) to send the move2
+	// [partitionID][BlockNumber][]ids to append header to
+	var shouldGetSignedHeader []map[int64][]*dependencies.TxResponse
 	// SentTx that are not received
 	var sentTxs []map[string]*dependencies.TxResponse
 	for range blockChans {
 		sentTxs = append(sentTxs, make(map[string]*dependencies.TxResponse))
+		shouldGetSignedHeader = append(shouldGetSignedHeader, make(map[int64][]*dependencies.TxResponse))
 	}
 	// sentTxs = append(sentTxs, make(map[string]*logsreader.TxResponse))
 	totalOngoingTxs := 0
@@ -102,15 +106,27 @@ func clientEmitter(config *config.Config, contractsMap []*crypto.Address, client
 		partitionID, selectValue, _ := reflect.Select(cases)
 		signedBlock := selectValue.Interface().(*rpcquery.SignedHeadersResult)
 
-		// signedBlock := <-blockChans[partitionID]
-		// logrus.Infof("RECEIVED BLOCK %v from partition %v", signedBlock.SignedHeader.Height, partitionID)
-		// logrus.Infof("Dependencies: %v", dependencyGraph.Length)
-		// dependencyGraph.bfs()
+		// If we are waiting for a header
+		for pp, p := range shouldGetSignedHeader {
+			for hh, h := range p {
+				logrus.Infof("Send to part %v height: %v: %v", pp, hh, h)
+			}
+		}
+		if txsToMod, ok := shouldGetSignedHeader[partitionID][signedBlock.SignedHeader.Height]; ok {
+			for _, txToMod := range txsToMod {
+				txToMod.Tx.SignedHeader = signedBlock.SignedHeader
+				// Send Tx
+				logrus.Infof("Sending move2 tx")
+				changeIdsSignAndsendTx(txToMod)
+			}
+			delete(shouldGetSignedHeader[partitionID], signedBlock.SignedHeader.Height)
+		}
+		// Go trough received transactions
 		for _, tx := range signedBlock.TxExecutions {
 			txHash := string(tx.TxHash)
 			// Found tx
 			if sentTx, ok := sentTxs[partitionID][txHash]; ok {
-				logrus.Infof("Executing: %v %v at partition %v", sentTx.MethodName, sentTx.OriginalIds, sentTx.PartitionIndex)
+				logrus.Infof("Executing: %v %v at partition %v, block height: %v", sentTx.MethodName, sentTx.OriginalIds, sentTx.PartitionIndex, signedBlock.SignedHeader.Height)
 				if tx.Exception != nil {
 					logrus.Fatalf("Exception happened %v executing %v %v", tx.Exception, sentTx.MethodName, sentTx.OriginalIds)
 				}
@@ -136,23 +152,24 @@ func clientEmitter(config *config.Config, contractsMap []*crypto.Address, client
 				} else if sentTx.MethodName == "moveTo" {
 					// Ids are changed from here on
 					// Get proofs to partition issuing move
-					// TODO: How to parallelise this
 					toPartition := sentTx.PartitionIndex
-					logrus.Infof("Partition %v ADDR %v", toPartition, sentTx.Tx.Address)
+					logrus.Infof("Partition %v ADDR %v getting proof", toPartition, sentTx.Tx.Address)
+					// TODO: How to parallelise this
 					proofs, err := clients[toPartition].GetAccountProof(*sentTx.Tx.Address)
-
 					checkFatalError(err)
-					// Save signed header in tx in dependency graph
-					dependencyGraph.AddFieldsToMove2(sentTx.OriginalIds[0], signedBlock.SignedHeader, proofs)
-
+					// Save that I need signed header
+					go dependencyGraph.AddFieldsToMove2(sentTx.OriginalIds[0], shouldGetSignedHeader, partitionID, signedBlock.SignedHeader.Height, proofs)
 				}
 
 				totalOngoingTxs--
 				delete(sentTxs[partitionID], txHash)
 				if len(freedTxs) != 0 {
 					for freedTx := range freedTxs {
-						// logrus.Infof("Sending blocked tx: %v (%v)", freedTx.methodName, freedTx.originalIds)
-						changeIdsSignAndsendTx(freedTx)
+						// logrus.Infof("Sending blocked tx: %v (%v)", freedTx.MethodName, freedTx.OriginalIds)
+						// Have to wait to get the right signed header
+						if freedTx.MethodName != "move2" {
+							changeIdsSignAndsendTx(freedTx)
+						}
 					}
 				}
 			}
@@ -162,7 +179,7 @@ func clientEmitter(config *config.Config, contractsMap []*crypto.Address, client
 		for pID := range blockChans {
 			numTxsSent += len(sentTxs[pID])
 		}
-		if numTxsSent == 0 {
+		if numTxsSent == 0 && dependencyGraph.Length == 0 {
 			running = false
 		}
 		for numTxsSent < outstandingTxs && txStreamOpen {

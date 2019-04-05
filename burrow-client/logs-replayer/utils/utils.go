@@ -36,8 +36,9 @@ func ListenBlockHeaders(partition string, client *def.Client, logs *Log, blockCh
 		}
 		if commence {
 			blockChan <- resp
-			logrus.Infof("---------GOT BLOCK %v from partition %v %v %v root hash: %v, storage hash: %v",
-				resp.SignedHeader.Height, partition, resp.SignedHeader.TotalTxs, resp.SignedHeader.Time.UnixNano(), resp.SignedHeader.Hash(), resp.SignedHeader.AppHash)
+			logrus.Infof("---------GOT BLOCK %v from partition %v, totalTx: %v, Epoch: %v, root hash: %v, storage hash: %v",
+				resp.SignedHeader.Height, partition, resp.SignedHeader.TotalTxs, resp.SignedHeader.Time.UnixNano(), resp.SignedHeader.Hash(),
+				resp.SignedHeader.AppHash)
 			logs.Log("tput-partition-"+partition, "%d %d\n", resp.SignedHeader.TotalTxs, resp.SignedHeader.Time.UnixNano())
 			logs.Flush()
 			// if resp.SignedHeader.NumTxs == 0 {
