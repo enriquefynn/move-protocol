@@ -68,11 +68,18 @@ func (lr *LogsReader) ChangeIDsMultiShard(txResponse *dependencies.TxResponse, i
 			txInput, err := lr.kittyABI.Methods["transferFrom"].Inputs.Pack(txResponse.AddressArgument[1])
 			fatalError(err)
 			txResponse.Tx.Data = append(lr.kittyABI.Methods["transferFrom"].Id(), txInput...)
-		} else if txResponse.MethodName == "moveTo" || txResponse.MethodName == "move2" {
+		} else if txResponse.MethodName == "moveTo" {
+			txInput, err := lr.kittyABI.Methods["moveTo"].Inputs.Pack(txResponse.BigIntArgument)
+			fatalError(err)
+			txResponse.Tx.Data = append(lr.kittyABI.Methods["moveTo"].Id(), txInput...)
 			// Signer is the token owner
 			txResponse.Signer = lr.AccountMap[lr.TokenOwnerMap[tokenID]]
 			txResponse.Tx.Input.Address = txResponse.Signer.Account.GetAddress()
 
+		} else if txResponse.MethodName == "move2" {
+			// Signer is the token owner
+			txResponse.Signer = lr.AccountMap[lr.TokenOwnerMap[tokenID]]
+			txResponse.Tx.Input.Address = txResponse.Signer.Account.GetAddress()
 		} else {
 			logrus.Fatalf("Method not found %v", txResponse.MethodName)
 		}
@@ -89,8 +96,8 @@ func (lr *LogsReader) ExtractKittyID(event *exec.Event) int64 {
 	return id.Int64()
 }
 
-func NewTxResponse(methodName string, chainID, originalID int64, amount uint64, data []byte) *dependencies.TxResponse {
-	logrus.Infof("CREATE MOVE: %v chainID: %v", methodName, chainID)
+func NewTxResponse(methodName string, chainID, originalID int64, amount uint64, data []byte, partitionToGo int64) *dependencies.TxResponse {
+	// logrus.Infof("CREATE MOVE: %v chainID: %v", methodName, chainID)
 	newTx := payload.CallTx{
 		Input: &payload.TxInput{
 			// Address: from,
@@ -107,15 +114,18 @@ func NewTxResponse(methodName string, chainID, originalID int64, amount uint64, 
 		Tx:             &newTx,
 		MethodName:     methodName,
 		OriginalIds:    []int64{originalID},
+		// MovingTo:       partitionToGo,
 	}
 
 }
 func (lr *LogsReader) CreateMoveDecidePartitioning(tx *dependencies.TxResponse, partitioning partitioning.Partitioning) []*dependencies.TxResponse {
 	var txResponses []*dependencies.TxResponse
 	var partitioningObjects []int64
+	isBirth := false
 
 	if len(tx.OriginalIds) == 3 {
 		// Last one is the kitty id, should not be considered (create in same partition as matron)
+		isBirth = true
 		partitioningObjects = tx.OriginalIds[:2]
 	} else {
 		partitioningObjects = tx.OriginalIds
@@ -123,17 +133,20 @@ func (lr *LogsReader) CreateMoveDecidePartitioning(tx *dependencies.TxResponse, 
 	shouldMove := !partitioning.IsSame(partitioningObjects...)
 
 	partitionToGo := partitioning.WhereToMove(partitioningObjects...)
+	// Kitty should be born together with mom
+	if isBirth {
+		partitioning.Move(tx.OriginalIds[2], partitionToGo)
+	}
 	// set the partition to go tx
 	tx.PartitionIndex = int(partitionToGo - 1)
 	tx.ChainID = strconv.Itoa(tx.PartitionIndex + 1)
-	logrus.Infof("Sending %v to %v", tx.MethodName, tx.ChainID)
 	if !shouldMove {
 		// No need to move
 		return nil
 	}
 
 	for _, id := range partitioningObjects {
-		originalPartition := partitioning.Get(id)
+		originalPartition, _ := partitioning.Get(id)
 		// Should move this id
 		if originalPartition != partitionToGo {
 			// Move input
@@ -144,10 +157,10 @@ func (lr *LogsReader) CreateMoveDecidePartitioning(tx *dependencies.TxResponse, 
 			// accountToMove := idMap[id]
 			// logrus.Infof("ACCOUNT TO MOVE: %v", accountToMove)
 			// move from originalPartition to partitionToGo
-			moveToTxResponse := NewTxResponse("moveTo", originalPartition, id, tx.Tx.Input.Amount, txData)
+			moveToTxResponse := NewTxResponse("moveTo", originalPartition, id, tx.Tx.Input.Amount, txData, partitionToGo)
 			// move2 to partitionToGo
 			partitioning.Move(id, partitionToGo)
-			move2TxResponse := NewTxResponse("move2", partitionToGo, id, tx.Tx.Input.Amount, txData)
+			move2TxResponse := NewTxResponse("move2", partitionToGo, id, tx.Tx.Input.Amount, txData, partitionToGo)
 
 			txResponses = append(txResponses, moveToTxResponse)
 			txResponses = append(txResponses, move2TxResponse)

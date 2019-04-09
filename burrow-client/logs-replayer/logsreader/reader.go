@@ -152,7 +152,7 @@ func (lr *LogsReader) ChangeIDs(txResponse *dependencies.TxResponse, idMap map[i
 
 func debugf(format string, a ...interface{}) {
 	// Dirty hack
-	logrus.Infof(format, a...)
+	// logrus.Infof(format, a...)
 }
 
 func (lr *LogsReader) LogsLoader() chan *dependencies.TxResponse {
