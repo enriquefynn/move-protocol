@@ -198,7 +198,7 @@ contract Kitty is SERC721 {
     event Birth(address kittyAddress, address owner, uint32 kittyId, Kitty matronAddress, Kitty sireAddress, uint256 genes);
     event Pregnant(address owner, Kitty matronAddress, Kitty sireAddress, uint256 cooldownEndBlock);
 
-    function moveTo(uint _toShard) external {
+    function moveTo(uint256 _toShard) external {
         assembly {
             move(_toShard)
         } 
@@ -235,9 +235,6 @@ contract Kitty is SERC721 {
         owner = _owner;
         cooldownIndex = _cooldownIndex;
         generation = uint16(_generation);
-
-        // It's probably never going to happen, 4 billion cats is A LOT, but
-        // let's just be 100% sure we never let this happen.
 
         // emit the birth event
         emit Birth(
