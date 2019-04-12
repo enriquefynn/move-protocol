@@ -40,7 +40,7 @@ func ListenBlockHeaders(partition string, client *def.Client, logs *Log, blockCh
 				resp.SignedHeader.Height, partition, resp.SignedHeader.TotalTxs, resp.SignedHeader.Time.UnixNano(), resp.SignedHeader.Hash(),
 				resp.SignedHeader.AppHash)
 			logs.Log("tput-partition-"+partition, "%d %d\n", resp.SignedHeader.TotalTxs, resp.SignedHeader.Time.UnixNano())
-			logs.Flush()
+			go logs.Flush()
 			// if resp.SignedHeader.NumTxs == 0 {
 			// 	closing++
 			// 	if closing == 3 {

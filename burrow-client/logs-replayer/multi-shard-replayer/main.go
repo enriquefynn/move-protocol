@@ -3,6 +3,7 @@ package main
 import (
 	"io/ioutil"
 	"os"
+	"os/signal"
 	"reflect"
 	"time"
 
@@ -33,6 +34,15 @@ func clientEmitter(config *config.Config, logs *utils.Log, contractsMap []*crypt
 	logsReader *logsreader.LogsReader, blockChans []chan *rpcquery.SignedHeadersResult) {
 
 	txStreamOpen := true
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt)
+	go func() {
+		for range c {
+			logrus.Warn("Stopping reading transactions now")
+			txStreamOpen = false
+		}
+	}()
+
 	// Partitioning
 	var partitioning = partitioning.GetPartitioning(config)
 	// Txs streamer
@@ -119,6 +129,7 @@ func clientEmitter(config *config.Config, logs *utils.Log, contractsMap []*crypt
 				txToMod.Tx.SignedHeader = signedBlock.SignedHeader
 				// Send Tx
 				changeIdsSignAndsendTx(txToMod)
+				logrus.Infof("Sending move2 to partition %v", txToMod.PartitionIndex+1)
 			}
 			delete(shouldGetSignedHeader[partitionID], signedBlock.SignedHeader.Height)
 		}
@@ -178,12 +189,11 @@ func clientEmitter(config *config.Config, logs *utils.Log, contractsMap []*crypt
 				}
 			}
 		}
-		added := 0
 		numTxsSent := 0
 		for pID := range blockChans {
 			numTxsSent += len(sentTxs[pID])
 		}
-		logrus.Infof("Last sentTxs %v added: %v dependency graph: %v", len(sentTxs[partitionID]), added, dependencyGraph.Length)
+		logrus.Infof("[PARTITION %v] Last sentTxs %v dependency graph: %v", partitionID, len(sentTxs[partitionID]), dependencyGraph.Length)
 		if numTxsSent == 0 && dependencyGraph.Length == 0 && txStreamOpen == false {
 			logrus.Warnf("Shutting down")
 			running = false
@@ -202,7 +212,7 @@ func clientEmitter(config *config.Config, logs *utils.Log, contractsMap []*crypt
 		// logrus.Infof("Added: %v SentTxs: %v", added, len(sentTxs))
 		// logrus.Infof("Sent this round: %v", sentTxsThisRound)
 		logs.Log("moved-accounts-partition-"+signedBlock.SignedHeader.ChainID, "%d %d\n", movedAccounts, signedBlock.SignedHeader.Time.UnixNano())
-		logs.Flush()
+		go logs.Flush()
 		movedAccounts = 0
 	}
 }
