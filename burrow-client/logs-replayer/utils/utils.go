@@ -27,7 +27,7 @@ func ListenBlockHeaders(partition string, client *def.Client, logs *Log, blockCh
 	checkFatalError(err)
 
 	commence := false
-	// closing := 0
+	lastTime := int64(0)
 	for {
 		resp, err := signedHeaders.Recv()
 		checkFatalError(err)
@@ -36,17 +36,13 @@ func ListenBlockHeaders(partition string, client *def.Client, logs *Log, blockCh
 		}
 		if commence {
 			blockChan <- resp
-			logrus.Infof("---------GOT BLOCK %v from partition %v, totalTx: %v, Epoch: %v, root hash: %v, storage hash: %v",
-				resp.SignedHeader.Height, partition, resp.SignedHeader.TotalTxs, resp.SignedHeader.Time.UnixNano(), resp.SignedHeader.Hash(),
+			deltaTime := float64(resp.SignedHeader.Time.UnixNano()-lastTime) / float64(1e9)
+			logrus.Infof("---------GOT BLOCK %v from partition %v, totalTx: %v, Elapsed time: %v, root hash: %v, storage hash: %v",
+				resp.SignedHeader.Height, partition, resp.SignedHeader.TotalTxs, deltaTime, resp.SignedHeader.Hash(),
 				resp.SignedHeader.AppHash)
 			logs.Log("tput-partition-"+partition, "%d %d\n", resp.SignedHeader.TotalTxs, resp.SignedHeader.Time.UnixNano())
+			lastTime = resp.SignedHeader.Time.UnixNano()
 			go logs.Flush()
-			// if resp.SignedHeader.NumTxs == 0 {
-			// 	closing++
-			// 	if closing == 3 {
-			// 		break
-			// 	}
-			// }
 		}
 	}
 }

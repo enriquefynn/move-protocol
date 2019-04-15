@@ -5,7 +5,7 @@ import (
 	"os"
 	"strconv"
 
-	"../utils"
+	"github.com/enriquefynn/sharding-runner/burrow-client/config"
 	"github.com/sirupsen/logrus"
 )
 
@@ -15,12 +15,12 @@ func main() {
 		logrus.Fatalf("Error: %v", err)
 	}
 
-	accounts := utils.GetSignedAccounts(nCli)
-	for _, acc := range accounts {
+	accounts := config.GetSignedAccounts(nCli)
+	for i := 0; i < nCli; i++ {
 		fmt.Printf(`
 [[GenesisDoc.Accounts]]
   Address = "%v"
   Amount = 99999999999999
-`, acc[0].GetAddress())
+`, accounts[i][0].GetAddress())
 	}
 }

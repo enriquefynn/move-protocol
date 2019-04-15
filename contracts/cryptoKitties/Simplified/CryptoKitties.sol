@@ -312,7 +312,7 @@ contract CryptoKitties is ERC721 {
     /// @param _owner the future owner of the created kittens. Default to contract COO
     function createPromoKitty(uint256 _genes, address _owner) external {
         address kittyOwner = _owner;
-        require(promoCreatedCount < PROMO_CREATION_LIMIT);
+        // require(promoCreatedCount < PROMO_CREATION_LIMIT);
 
         promoCreatedCount++;
         _createKitty(0, 0, 0, _genes, kittyOwner);

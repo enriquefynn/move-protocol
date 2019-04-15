@@ -58,12 +58,13 @@ func clientEmitter(config *config.Config, logs *utils.Log, contractsMap []*crypt
 	var shouldGetSignedHeader []map[int64][]*dependencies.TxResponse
 	// SentTx that are not received
 	var sentTxs []map[string]*dependencies.TxResponse
+	// Store freed txs to send later
+	var freedTxsMaps []map[*dependencies.TxResponse]bool
 	for range blockChans {
 		sentTxs = append(sentTxs, make(map[string]*dependencies.TxResponse))
 		shouldGetSignedHeader = append(shouldGetSignedHeader, make(map[int64][]*dependencies.TxResponse))
+		freedTxsMaps = append(freedTxsMaps, make(map[*dependencies.TxResponse]bool))
 	}
-	// sentTxs = append(sentTxs, make(map[string]*logsreader.TxResponse))
-	totalOngoingTxs := 0
 
 	// Dependency graph
 	dependencyGraph := dependencies.NewDependencies()
@@ -72,19 +73,18 @@ func clientEmitter(config *config.Config, logs *utils.Log, contractsMap []*crypt
 	changeIdsSignAndsendTx := func(tx *dependencies.TxResponse) {
 		logsReader.ChangeIDsMultiShard(tx, idMap, contractsMap)
 		signedTx := tx.Sign()
-		logrus.Infof("SENDING %v %v to %v", tx.MethodName, tx.OriginalIds, tx.ChainID)
+		// logrus.Infof("SENDING %v %v to %v", tx.MethodName, tx.OriginalIds, tx.ChainID)
 		_, err := clients[tx.PartitionIndex].BroadcastEnvelopeAsync(signedTx)
 		checkFatalError(err)
 		sentTxs[tx.PartitionIndex][string(signedTx.Tx.Hash())] = tx
 	}
 
-	addToDependenciesAndSend := func(tx *dependencies.TxResponse) bool {
-		totalOngoingTxs++
+	addToDependenciesAndSend := func(tx *dependencies.TxResponse) int {
 		txsToSend := dependencyGraph.AddDependencyWithMoves(tx, partitioning)
 		for _, tx := range txsToSend {
 			changeIdsSignAndsendTx(tx)
 		}
-		return true
+		return len(txsToSend)
 	}
 
 	// First txs
@@ -105,25 +105,20 @@ func clientEmitter(config *config.Config, logs *utils.Log, contractsMap []*crypt
 
 	movedAccounts := 0
 	running := true
+
 	for running {
-		dependencyGraph.Print()
 		// Select a block from channels, get channel id and block
 		logrus.Infof("Awaiting for block")
 		partitionID, selectValue, _ := reflect.Select(cases)
 		signedBlock := selectValue.Interface().(*rpcquery.SignedHeadersResult)
 
 		// If we are waiting for a header
-		for pp, p := range shouldGetSignedHeader {
-			for hh, h := range p {
-				logrus.Infof("Waiting to send to part %v height: %v: %v", pp, hh, h)
-			}
-		}
 		if txsToMod, ok := shouldGetSignedHeader[partitionID][signedBlock.SignedHeader.Height]; ok {
 			for _, txToMod := range txsToMod {
 				txToMod.Tx.SignedHeader = signedBlock.SignedHeader
 				// Send Tx
 				changeIdsSignAndsendTx(txToMod)
-				logrus.Infof("Sending move2 to partition %v", txToMod.PartitionIndex+1)
+				// logrus.Infof("Sending move2 to partition %v", txToMod.PartitionIndex+1)
 			}
 			delete(shouldGetSignedHeader[partitionID], signedBlock.SignedHeader.Height)
 		}
@@ -170,39 +165,56 @@ func clientEmitter(config *config.Config, logs *utils.Log, contractsMap []*crypt
 					movedAccounts++
 				}
 
-				totalOngoingTxs--
 				delete(sentTxs[partitionID], txHash)
 				if len(freedTxs) != 0 {
 					for freedTx := range freedTxs {
 						// logrus.Infof("Sending blocked tx: %v (%v)", freedTx.MethodName, freedTx.OriginalIds)
 						// Have to wait to get the right signed header
 						if freedTx.MethodName != "move2" {
-							changeIdsSignAndsendTx(freedTx)
+							// changeIdsSignAndsendTx(freedTx)
+							freedTxsMaps[freedTx.PartitionIndex][freedTx] = true
 						}
 					}
 				}
 			}
 		}
-		// numTxsSent := 0
-		// for pID := range blockChans {
-		// 	numTxsSent += len(sentTxs[pID])
-		// }
+
+		if len(signedBlock.TxExecutions) < outstandingTxs {
+			outstandingTxs--
+		} else {
+			outstandingTxs++
+		}
+
+		dependenciesSent := 0
+		streamSent := 0
 		numTxsSent := len(sentTxs[partitionID])
-		logrus.Infof("[PARTITION %v] Last sentTxs %v dependency graph: %v", partitionID, len(sentTxs[partitionID]), dependencyGraph.Length)
 		if numTxsSent == 0 && dependencyGraph.Length == 0 && txStreamOpen == false {
 			logrus.Warnf("Shutting down")
 			running = false
 		}
-		for numTxsSent < outstandingTxs && txStreamOpen {
-			numTxsSent++
+		// TODO: Executed txs
+
+		for tx := range freedTxsMaps[partitionID] {
+			if dependenciesSent >= outstandingTxs {
+				break
+			}
+			dependenciesSent++
+			changeIdsSignAndsendTx(tx)
+			delete(freedTxsMaps[partitionID], tx)
+		}
+
+		for dependenciesSent+streamSent < outstandingTxs && txStreamOpen {
 			txResponse, chOpen := <-txsChan
 			if !chOpen {
 				logrus.Warnf("No more txs in channel")
 				txStreamOpen = false
 				break
 			}
-			addToDependenciesAndSend(txResponse)
+			sentTxs := addToDependenciesAndSend(txResponse)
+			streamSent += sentTxs
 		}
+		logrus.Infof("[PARTITION %v] Sending: %v: Last sentTxs: dependency: %v, stream: %v dependency graph: %v, txs executed: %v",
+			partitionID, outstandingTxs, dependenciesSent, streamSent, dependencyGraph.Length, len(signedBlock.TxExecutions))
 		// logrus.Infof("Added: %v SentTxs: %v", added, len(sentTxs))
 		// logrus.Infof("Sent this round: %v", sentTxsThisRound)
 		logs.Log("moved-accounts-partition-"+signedBlock.SignedHeader.ChainID, "%d %d\n", movedAccounts, signedBlock.SignedHeader.Time.UnixNano())
