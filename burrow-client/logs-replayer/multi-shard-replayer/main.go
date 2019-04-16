@@ -160,7 +160,7 @@ func clientEmitter(config *config.Config, logs *utils.Log, contractsMap []*crypt
 					proofs, err := clients[toPartition].GetAccountProof(*sentTx.Tx.Address)
 					checkFatalError(err)
 					// Save that I need signed header
-					dependencyGraph.AddFieldsToMove2(sentTx.OriginalIds[0], shouldGetSignedHeader, partitionID, signedBlock.SignedHeader.Height, proofs)
+					dependencyGraph.AddFieldsToMove2(sentTx.OriginalIds[0], shouldGetSignedHeader, partitionID, proofs)
 				} else if sentTx.MethodName == "move2" {
 					movedAccounts++
 				}
