@@ -5,9 +5,9 @@ import (
 	"strconv"
 
 	"github.com/enriquefynn/sharding-runner/burrow-client/logs-replayer/partitioning"
+	"github.com/hyperledger/burrow/binary"
 	"github.com/hyperledger/burrow/crypto"
 	"github.com/hyperledger/burrow/dependencies"
-	"github.com/hyperledger/burrow/execution/exec"
 	"github.com/hyperledger/burrow/txs/payload"
 	"github.com/sirupsen/logrus"
 )
@@ -86,13 +86,13 @@ func (lr *LogsReader) ChangeIDsMultiShard(txResponse *dependencies.TxResponse, i
 	}
 }
 
-func (lr *LogsReader) ExtractNewContractAddress(event *exec.Event) *crypto.Address {
-	addr := crypto.MustAddressFromBytes(event.Log.Data[12:32])
+func (lr *LogsReader) ExtractNewContractAddress(event binary.HexBytes) *crypto.Address {
+	addr := crypto.MustAddressFromBytes(event[12:32])
 	return &addr
 }
-func (lr *LogsReader) ExtractKittyID(event *exec.Event) int64 {
+func (lr *LogsReader) ExtractKittyID(event binary.HexBytes) int64 {
 	id := big.NewInt(0)
-	id.SetBytes(event.Log.Data[64:96])
+	id.SetBytes(event[64:96])
 	return id.Int64()
 }
 

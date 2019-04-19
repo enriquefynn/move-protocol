@@ -31,7 +31,7 @@ func ListenBlockHeaders(partition string, client *def.Client, logs *Log, blockCh
 	for {
 		resp, err := signedHeaders.Recv()
 		checkFatalError(err)
-		if !commence && resp.SignedHeader.NumTxs > 0 {
+		if !commence && resp.SignedHeader.TotalTxs >= 2 {
 			commence = true
 		}
 		if commence {
@@ -42,7 +42,7 @@ func ListenBlockHeaders(partition string, client *def.Client, logs *Log, blockCh
 				resp.SignedHeader.AppHash)
 			logs.Log("tput-partition-"+partition, "%d %d\n", resp.SignedHeader.TotalTxs, resp.SignedHeader.Time.UnixNano())
 			lastTime = resp.SignedHeader.Time.UnixNano()
-			go logs.Flush()
+			logs.Flush()
 		}
 	}
 }

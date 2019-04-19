@@ -1,11 +1,13 @@
 contracts:
   deploy  : true
-  path    : "../../contracts/cryptoKitties/Simplified/binaries/CryptoKitties.bin"
-  genePath: "../../contracts/cryptoKitties/Simplified/binaries/GeneScience.bin"
-  ckABI   : "../../contracts/cryptoKitties/Simplified/binaries/CryptoKitties.abi"
-  geneABI : "../../contracts/cryptoKitties/Simplified/binaries/GeneScience.abi"
-  replayTransactionsPath: "./data/logs_from_4605167_to_7321785.txt"
-  # replayTransactionsPath: "./simple.txt"
+  path    : "../../../contracts/cryptoKitties/Simplified/binaries/CryptoKitties.bin"
+  genePath: "../../../contracts/cryptoKitties/Simplified/binaries/GeneScience.bin"
+  ckABI   : "../../../contracts/cryptoKitties/Simplified/binaries/CryptoKitties.abi"
+  kittyABI: "../../../contracts/cryptoKitties/Scalable/binaries/Kitty.abi"
+  geneABI : "../../../contracts/cryptoKitties/Simplified/binaries/GeneScience.abi"
+  replayTransactionsPath: "../data/logs_from_4605167_to_7321785.txt"
+  # replayTransactionsPath: "../data/simple.txt"
+  # replayTransactionsPath: "../data/giveBirth.txt"
   # replayTransactionsPath: "../../go-ethereum-client/tx-extractor/read/txs_read.txt"
   # contractsFilesPath: "../../go-ethereum-client/tx-extractor/read/contracts"
   contractsFilesPath: "../../go-ethereum-client/tx-extractor/read/contractsModified"
@@ -14,11 +16,19 @@ contracts:
   # address: "0000000000000000000000000000000000000000"
 
 benchmark:
-  chainID: "1"
   clients: 1
   timeout: 10
-  address: "127.0.0.1:20002"
   outstandingTxs: 300
+
+servers:
+  - chainID: "1"
+    address: "127.0.0.1:20002"
+  # - chainID: "2"
+  #   address: "127.0.0.1:20102"
+
+partitioning:
+  numberPartitions: 1 
+  type: "hash"
 
 logs:
   dir: "./data/logs/"
