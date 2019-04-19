@@ -167,15 +167,15 @@ func clientEmitter(config *config.Config, logs *utils.Log, contractsMap []*crypt
 			txHash := string(tx.TxHash)
 			// Found tx
 			if sentTx, ok := sentTxs[partitionID][txHash]; ok {
-				log.Infof("Executing: %v %v tokenID: %v at partition %v, block height: %v", sentTx.MethodName, sentTx.OriginalIds, idMap[sentTx.OriginalIds[0]],
-					sentTx.PartitionIndex+1, signedBlock.SignedHeader.Height)
+				// log.Infof("Executing: %v %v tokenID: %v at partition %v, block height: %v", sentTx.MethodName, sentTx.OriginalIds, idMap[sentTx.OriginalIds[0]],
+				// 	sentTx.PartitionIndex+1, signedBlock.SignedHeader.Height)
 				if tx.Exception != nil {
 					log.Fatalf("Exception happened %v executing %v %v", tx.Exception, sentTx.MethodName, sentTx.OriginalIds)
 				}
 				freedTxs := dependencyGraph.RemoveDependency(sentTx.OriginalIds)
 
 				if sentTx.MethodName == "createPromoKitty" || sentTx.MethodName == "giveBirth" {
-					log.Infof("%v", tx.LogData)
+					// log.Infof("%v", tx.LogData)
 					kittyID := logsReader.ExtractKittyID(tx.LogData[0])
 					idMap[sentTx.OriginalBirthID] = logsReader.ExtractNewContractAddress(tx.LogData[0])
 					// log.Infof("KITTY ID: %v", kittyId)
