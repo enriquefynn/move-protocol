@@ -40,27 +40,12 @@ func ListenBlockHeaders(partition string, client *def.Client, logs *Log, blockCh
 			logrus.Infof("---------GOT BLOCK %v from partition %v, totalTx: %v, Elapsed time: %v, root hash: %v, storage hash: %v",
 				resp.SignedHeader.Height, partition, resp.SignedHeader.TotalTxs, deltaTime, resp.SignedHeader.Hash(),
 				resp.SignedHeader.AppHash)
-			logs.Log("tput-partition-"+partition, "%d %d\n", resp.SignedHeader.TotalTxs, resp.SignedHeader.Time.UnixNano())
+			logs.Log("tput-partition-"+partition, "%d %d %v\n", resp.SignedHeader.TotalTxs, resp.SignedHeader.Time.UnixNano(), resp.SignedHeader.ProposerAddress)
 			lastTime = resp.SignedHeader.Time.UnixNano()
-			logs.Flush()
+			// logs.Flush()
 		}
 	}
 }
-
-// func ListenBlocks(client *def.Client, blockCh chan<- *exec.BlockExecution) {
-// 	end := rpcevents.StreamBound()
-
-// 	request := &rpcevents.BlocksRequest{
-// 		BlockRange: rpcevents.NewBlockRange(rpcevents.AbsoluteBound(1), end),
-// 	}
-// 	clientEvents, err := client.Events()
-// 	stream, err := clientEvents.Stream(context.Background(), request)
-// 	checkFatalError(err)
-// 	rpcevents.ConsumeBlockExecutions(stream, func(blk *exec.BlockExecution) error {
-// 		blockCh <- blk
-// 		return nil
-// 	})
-// }
 
 func CreateContract(chainID string, config *config.Config, accounts *logsreader.LogsReader, client *def.Client, path string, args ...interface{}) (*crypto.Address, error) {
 	contractEnv, err := accounts.CreateContract(chainID, path, args...)

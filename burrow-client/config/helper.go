@@ -37,8 +37,10 @@ type Config struct {
 		Timeout        int `yaml:"timeout"`
 	}
 	Servers []struct {
-		ChainID string `yaml:"chainID"`
-		Address string `yaml:"address"`
+		ChainID   string `yaml:"chainID"`
+		Addresses []string
+		// Address string `yaml:"address"`
+		// }
 	}
 	Logs struct {
 		Dir string `yaml:"dir"`

@@ -199,6 +199,7 @@ contract Kitty is SERC721 {
     event Pregnant(address owner, Kitty matronAddress, Kitty sireAddress, uint256 cooldownEndBlock);
 
     function moveTo(uint256 _toShard) external {
+        // require(msg.sender == owner);
         assembly {
             move(_toShard)
         } 

@@ -39,6 +39,40 @@ def aggregate(data, start_time, end_time, delta_time = 1):
         acc = 0
     return acc_data
 
+def multi_plot_absolute(tput_path):
+    times = []
+    txs_delta = []
+    first = True
+    initial_time = 0
+    txs = 0
+    prev_time = 0
+    with open(tput_path, 'r') as f:
+        for line in f:
+            line = line.split()
+            txs = int(line[0])
+            timestamp = int(line[1])
+            if first:
+                prev_txs = txs 
+                prev_time = timestamp 
+                initial_time = timestamp
+                first = False
+                continue
+            txs_delta.append(txs - prev_txs)
+            times.append((timestamp - prev_time)/1e9)
+            prev_time = timestamp
+            prev_txs = txs
+
+    fig, ax = plt.subplots()
+    # ax.plot(times, txs_delta, '.')
+    for i in range(len(txs_delta)):
+        txs_delta[i] = txs_delta[i]/times[i]
+    ax.plot([i for i in range(len(txs_delta))], txs_delta, '.')
+    print("Average: {}".format(txs/float((prev_time - initial_time)/1e9)))
+    # ax.plot(prev_time - initial_time, txs/float((prev_time - initial_time)/1e9), '.')
+    ax.set(xlabel='time (s)', ylabel='tx/s')
+    plt.show()
+    return fig, ax
+
 
 def multi_plot(tput_paths, delta_time = 1):
     files = []
@@ -52,7 +86,9 @@ def multi_plot(tput_paths, delta_time = 1):
     min_elements = float('inf')
     for f in files:
         lines = f.readlines()
-        lines = list(map(lambda i : list(map(lambda l : int(l), (i[:-1]).split())), lines))
+        lines = list(map(lambda i : i[:-1].split(), lines))
+        lines = list(map(lambda i : i[:2], lines))
+        lines = list(map(lambda i : list(map(lambda j : int(j) , i)), lines))
         raw_data.append(lines)
         if len(lines) < min_elements:
             min_elements = len(lines)
@@ -79,11 +115,12 @@ def multi_plot(tput_paths, delta_time = 1):
     acc_data = list(map(lambda i : float(i/delta_time), acc_data))
 
     fig, ax = plt.subplots()
-    ax.plot([i*delta_time for i in range(0, len(acc_data))], acc_data)
+    ax.plot([i*delta_time for i in range(0, len(acc_data))], acc_data, '.')
     ax.set(xlabel='time (s)', ylabel='tx/s', title='tput {} partitions'.format(len(tput_paths)))
     plt.show()
     return fig, ax
 
 if __name__ == '__main__':
-    fig, ax = multi_plot(sys.argv[1:], delta_time=5)
+    # fig, ax = multi_plot(sys.argv[1:], delta_time=400)
+    fig, ax = multi_plot_absolute(sys.argv[1])
     fig.savefig('tput.pdf')
