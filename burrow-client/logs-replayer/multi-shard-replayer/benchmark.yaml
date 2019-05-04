@@ -6,6 +6,7 @@ contracts:
   kittyABI: "../../../contracts/cryptoKitties/Scalable/binaries/Kitty.abi"
   geneABI : "../../../contracts/cryptoKitties/Scalable/binaries/GeneScience.abi"
   replayTransactionsPath: "../data/logs_from_4605167_to_7321785.txt"
+  # replayTransactionsPath: "../data/simple.txt"
   # replayTransactionsPath: "../data/giveBirth.txt"
   # replayTransactionsPath: "../../go-ethereum-client/tx-extractor/read/txs_read.txt"
   # contractsFilesPath: "../../go-ethereum-client/tx-extractor/read/contracts"
@@ -17,16 +18,28 @@ contracts:
 benchmark:
   clients: 1
   timeout: 10
-  outstandingTxs: 300
+  outstandingTxs: 200
 
 servers:
+  # - chainID: "1"
+  #   address: "127.0.0.1:20002"
   - chainID: "1"
-    address: "127.0.0.1:20002"
+    addresses:
+      - "localhost:20002"
+  - chainID: "2"
+    addresses:
+      - "localhost:21002"
+
+  # - address: "node6:20052"
+    # - address: "node7:20062"
+    # - address: "node8:20072"
+    # - address: "node9:20082"
+    # - address: "node10:20092"
   # - chainID: "2"
   #   address: "127.0.0.1:20102"
 
 partitioning:
-  numberPartitions: 1
+  numberPartitions: 2
   type: "hash"
 
 logs:
