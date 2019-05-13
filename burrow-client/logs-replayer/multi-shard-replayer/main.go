@@ -2,7 +2,6 @@ package main
 
 import (
 	"io/ioutil"
-	"math/rand"
 	"os"
 	"os/signal"
 	"reflect"
@@ -37,66 +36,49 @@ func checkFatalError(err error) {
 
 func sendTxToClient(wg *sync.WaitGroup, client *def.Client, signedTxs []*txs.Envelope) {
 	defer wg.Done()
-	for _, tx := range signedTxs {
-		_, err := client.BroadcastEnvelopeAsync(tx)
-		if err != nil {
-			log.Fatalf("ERROR: %v", err)
-		}
-	}
+	client.BroadcastEnvelopeBatchAsync(signedTxs)
 }
 
 func sendTxBatch(wg *sync.WaitGroup, clients []*def.Client, signedTxs []*txs.Envelope) {
 	defer wg.Done()
 	// _, err := client.BroadcastEnvelopeBatchAsync(signedTxs)
-	txsPerClient := make(map[crypto.Address][]*txs.Envelope)
-	for _, tx := range signedTxs {
-		txsPerClient[tx.Tx.GetInputs()[0].Address] = append(txsPerClient[tx.Tx.GetInputs()[0].Address], tx)
-	}
-	var wg2 sync.WaitGroup
-	wg2.Add(len(txsPerClient))
-
-	for cli := range txsPerClient {
-		randomClient := rand.Intn(len(clients))
-		go sendTxToClient(&wg2, clients[randomClient], txsPerClient[cli])
-		// for _, tx := range txsPerClient[cli] {
-		// 	_, err := clients[randomClient].BroadcastEnvelopeAsync(&tx)
-		// 	if err != nil {
-		// 		log.Warnf("ERROR: %v", err)
-		// 	}
-		// }
-	}
-	wg2.Wait()
-
+	// txsPerClient := make(map[crypto.Address][]*txs.Envelope)
 	// for _, tx := range signedTxs {
-	// 	_, err := clients[0].BroadcastEnvelopeAsync(tx)
-	// 	if err != nil {
-	// 		log.Fatalf("ERROR: %v", err)
-	// 	}
+	// 	txsPerClient[tx.Tx.GetInputs()[0].Address] = append(txsPerClient[tx.Tx.GetInputs()[0].Address], tx)
 	// }
+	// var wg2 sync.WaitGroup
+	// wg2.Add(len(txsPerClient))
+
+	// for cli := range txsPerClient {
+	// 	randomClient := rand.Intn(len(clients))
+	// 	go sendTxToClient(&wg2, clients[randomClient], txsPerClient[cli])
+	// }
+	// wg2.Wait()
+	clients[0].BroadcastEnvelopeBatchAsync(signedTxs)
 }
 
-func clientEmitter(config *config.Config, logs *utils.Log, contractsMap []*crypto.Address, clients map[string][]*def.Client,
-	logsReader *logsreader.LogsReader, blockChans []chan *rpcquery.SignedHeadersResult, readyToSentTxs []*dependencies.TxResponse, dependencyGraph *dependencies.Dependencies) {
+func clientEmitter(config *config.Config, logs *utils.Log, contractsMap []*crypto.Address,
+	clients map[string][]*def.Client, logsReader *logsreader.LogsReader, blockChans []chan *rpcquery.SignedHeadersResult,
+	readyToSendTxs []*dependencies.TxResponse, dependencyGraph *dependencies.Dependencies) {
+	defer logs.Flush()
 
+	running := true
 	txStreamOpen := true
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt)
 	go func() {
 		for range c {
 			log.Warn("Stopping reading transactions now")
-			txStreamOpen = false
+			running = false
 		}
 	}()
 
-	// Partitioning
-	// var partitioning = partitioning.GetPartitioning(config)
-	// Txs streamer
-	// txsChan := logsReader.LogsLoader()
 	// Mapping for kittens ids to address
 	idMap := make(map[int64]*crypto.Address)
 
 	// Number of simultaneous txs allowed
 	var outstandingTxs []int
+	var surplusTxs []int
 	// Signed Headers (Have to wait N + 2) to send the move2
 	// [partitionID][BlockNumber][]ids to append header to
 	var shouldGetSignedHeader []map[int64][]*dependencies.TxResponse
@@ -104,14 +86,15 @@ func clientEmitter(config *config.Config, logs *utils.Log, contractsMap []*crypt
 	var sentTxs []map[string]*dependencies.TxResponse
 	// Store freed txs to send later
 	var freedTxsMaps []map[*dependencies.TxResponse]bool
-	// txs to send per client
 
 	for i := int64(0); i < config.Partitioning.NumberPartitions; i++ {
 		sentTxs = append(sentTxs, make(map[string]*dependencies.TxResponse))
 		shouldGetSignedHeader = append(shouldGetSignedHeader, make(map[int64][]*dependencies.TxResponse))
 		freedTxsMaps = append(freedTxsMaps, make(map[*dependencies.TxResponse]bool))
 		outstandingTxs = append(outstandingTxs, config.Benchmark.OutstandingTxs)
+		surplusTxs = append(surplusTxs, 0)
 	}
+	latencyLog := utils.NewLatencyLog()
 
 	changeIdsSignAndSendTxBatch := func(txRes []*dependencies.TxResponse) float64 {
 		if len(txRes) == 0 {
@@ -127,12 +110,11 @@ func clientEmitter(config *config.Config, logs *utils.Log, contractsMap []*crypt
 		for _, tx := range txRes {
 			logsReader.ChangeIDsMultiShard(tx, idMap, contractsMap)
 			signedTx := tx.Sign()
-			// log.Infof("SENDING %v %v to %v, from %v, seq: %v", tx.MethodName, tx.OriginalIds, tx.ChainID, tx.Tx.Input.Address, tx.Tx.Input.Sequence)
-			// for _, id := range tx.OriginalIds {
-			// 	log.Infof("IDS: %v : %v", id, idMap[id])
-			// }
+
+			txHash := string(signedTx.Tx.Hash())
 			txsPerPartition[tx.ChainID] = append(txsPerPartition[tx.ChainID], signedTx)
-			sentTxs[tx.PartitionIndex][string(signedTx.Tx.Hash())] = tx
+			sentTxs[tx.PartitionIndex][txHash] = tx
+			latencyLog.Add(txHash, tx, start.UnixNano())
 			// log.Infof("SENDING TX FROM %v, seq: %v, part: %v %v %v", signedTx.Tx.GetInputs()[0].Address, signedTx.Tx.GetInputs()[0].Sequence, tx.PartitionIndex, tx.MethodName, tx.OriginalIds)
 		}
 
@@ -146,50 +128,64 @@ func clientEmitter(config *config.Config, logs *utils.Log, contractsMap []*crypt
 	}
 
 	// First txs
-	log.Infof("Sending first txs")
+	log.Infof("Sending %v first txs", int(config.Partitioning.NumberPartitions)*config.Benchmark.OutstandingTxs)
 	sendNTxs := int(config.Partitioning.NumberPartitions) * config.Benchmark.OutstandingTxs
-	if sendNTxs > len(readyToSentTxs) {
-		sendNTxs = len(readyToSentTxs)
+	if sendNTxs > len(readyToSendTxs) {
+		sendNTxs = len(readyToSendTxs)
 	}
-	timeTook := changeIdsSignAndSendTxBatch(readyToSentTxs[:sendNTxs])
+	timeTook := changeIdsSignAndSendTxBatch(readyToSendTxs[:sendNTxs])
 	log.Infof("TOOK: %v", timeTook)
-	readyToSentTxs = readyToSentTxs[sendNTxs:]
+	readyToSendTxs = readyToSendTxs[sendNTxs:]
 	cases := make([]reflect.SelectCase, len(blockChans))
 	for i, ch := range blockChans {
 		cases[i] = reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(ch)}
 	}
 
-	movedAccounts := 0
-	running := true
+	// txs to send per partition
+	experimentStart := time.Now()
+
+	moved2TxsToAdd := make(map[int][]*dependencies.TxResponse)
 
 	for running {
-		var sendTxs []*dependencies.TxResponse
-		sentMoved := 0
+		// var sendTxs []*dependencies.TxResponse
+		// Clean some stuff
+		var sendTxsPerPartition []*dependencies.TxResponse
+
+		moveToExecuted := 0
+		move2Executed := 0
+
 		// Select a block from channels, get channel id and block
 		partitionID, selectValue, _ := reflect.Select(cases)
 		signedBlock := selectValue.Interface().(*rpcquery.SignedHeadersResult)
+
+		for _, tx := range moved2TxsToAdd[partitionID] {
+			sendTxsPerPartition = append(sendTxsPerPartition, tx)
+		}
+
+		delete(moved2TxsToAdd, partitionID)
 
 		// If we are waiting for a header
 		if txsToMod, ok := shouldGetSignedHeader[partitionID][signedBlock.SignedHeader.Height]; ok {
 			for _, txToMod := range txsToMod {
 				txToMod.Tx.SignedHeader = signedBlock.SignedHeader
 				// Send Tx
-				// changeIdsSignAndsendTx(txToMod)
-				sendTxs = append(sendTxs, txToMod)
-				sentMoved++
+				// sendTxsPerPartition = append(sendTxsPerPartition, txToMod)
+				moved2TxsToAdd[txToMod.PartitionIndex] = append(moved2TxsToAdd[txToMod.PartitionIndex], txToMod)
 				// log.Infof("Sending move2 to partition %v", txToMod.PartitionIndex+1)
 			}
 			delete(shouldGetSignedHeader[partitionID], signedBlock.SignedHeader.Height)
 		}
+		timeGotBlockAt := time.Now().UnixNano()
 		// Go trough received transactions
 		for _, tx := range signedBlock.TxExecutions {
 			txHash := string(tx.TxHash)
 			// Found tx
 			if sentTx, ok := sentTxs[partitionID][txHash]; ok {
+				latencyLog.Remove(txHash, sentTx, logs, timeGotBlockAt)
 				// log.Infof("Executing: %v %v tokenID: %v at partition %v, block height: %v", sentTx.MethodName, sentTx.OriginalIds, idMap[sentTx.OriginalIds[0]],
 				// 	sentTx.PartitionIndex+1, signedBlock.SignedHeader.Height)
 				if tx.Exception != nil {
-					log.Fatalf("Exception happened %v executing %v %v", tx.Exception, sentTx.MethodName, sentTx.OriginalIds)
+					log.Warnf("Exception happened %v executing %v %v", tx.Exception, sentTx.MethodName, sentTx.OriginalIds)
 				}
 				freedTxs := dependencyGraph.RemoveDependency(sentTx.OriginalIds)
 
@@ -216,8 +212,9 @@ func clientEmitter(config *config.Config, logs *utils.Log, contractsMap []*crypt
 					checkFatalError(err)
 					// Save that I need signed header
 					dependencyGraph.AddFieldsToMove2(sentTx.OriginalIds[0], shouldGetSignedHeader, partitionID, proofs)
+					moveToExecuted++
 				} else if sentTx.MethodName == "move2" {
-					movedAccounts++
+					move2Executed++
 				}
 
 				delete(sentTxs[partitionID], txHash)
@@ -228,52 +225,78 @@ func clientEmitter(config *config.Config, logs *utils.Log, contractsMap []*crypt
 						freedTxsMaps[freedTx.PartitionIndex][freedTx] = true
 					}
 				}
+			} else {
+				log.Warnf("TX NOT SENT BUT RECEIVED!")
 			}
 		}
 
-		outstandingTxs[partitionID] = len(signedBlock.TxExecutions)
+		outstandingTxs[partitionID] = len(signedBlock.TxExecutions) + surplusTxs[partitionID]
+		surplusTxs[partitionID] = 0
 		if outstandingTxs[partitionID] > config.Benchmark.OutstandingTxs {
 			outstandingTxs[partitionID] = config.Benchmark.OutstandingTxs
 		}
 		// outstandingTxs[partitionID] = config.Benchmark.OutstandingTxs
 		log.Infof("Sending %v txs", len(signedBlock.TxExecutions))
 
-		dependenciesSent := 0
+		// dependenciesSent := 0
 		streamSent := 0
-		numTxsSent := len(sentTxs[partitionID])
-		if numTxsSent == 0 && dependencyGraph.Length == 0 && txStreamOpen == false {
+		if len(sentTxs[partitionID]) == 0 && dependencyGraph.Length == 0 && txStreamOpen == false {
 			log.Warnf("Shutting down")
 			running = false
 		}
 
+		dependenciesSent := 0
+		freedTxsMapsLen := len(freedTxsMaps[partitionID])
 		for tx := range freedTxsMaps[partitionID] {
-			if dependenciesSent >= outstandingTxs[partitionID] {
+			if len(sendTxsPerPartition) >= outstandingTxs[partitionID] {
 				break
 			}
 			dependenciesSent++
 			// timeSpentSending += changeIdsSignAndsendTx(tx)
-			sendTxs = append(sendTxs, tx)
+			sendTxsPerPartition = append(sendTxsPerPartition, tx)
 			delete(freedTxsMaps[partitionID], tx)
 		}
 		// var streamToSend []*dependencies.TxResponse
-		for dependenciesSent+streamSent+sentMoved < outstandingTxs[partitionID] && txStreamOpen {
-			if streamSent == len(readyToSentTxs) {
+		streamTry := 0
+		for (len(sendTxsPerPartition) < outstandingTxs[partitionID]) && txStreamOpen {
+			if len(readyToSendTxs) == 0 {
 				txStreamOpen = false
 				log.Warnf("Stop sending streamed txs")
-				logs.Log("stopped-stream-txs", "%d\n", signedBlock.SignedHeader.Time.UnixNano())
+				logs.Log("stopped-tx-stream", "%d\n", signedBlock.SignedHeader.Time.UnixNano())
+				// logs.Log("stopped-stream-txs", "%d\n", signedBlock.SignedHeader.Time.UnixNano())
 				break
 			}
-			sendTxs = append(sendTxs, readyToSentTxs[streamSent])
-			streamSent++
+			if streamTry >= len(readyToSendTxs) {
+				log.Warnf("Stop sending stream tx for partition %v", partitionID)
+				logs.Log("stopped-tx-stream-partition-"+signedBlock.SignedHeader.ChainID, "%d\n", signedBlock.SignedHeader.Time.UnixNano())
+				break
+			}
+			// Found a tx to send
+			if readyToSendTxs[streamTry].PartitionIndex == partitionID {
+				sendTxsPerPartition = append(sendTxsPerPartition, readyToSendTxs[streamTry])
+				streamSent++
+				readyToSendTxs = append(readyToSendTxs[:streamTry], readyToSendTxs[streamTry+1:]...)
+			}
+			streamTry++
 		}
-		timeTaken := changeIdsSignAndSendTxBatch(sendTxs)
+		timeTaken := changeIdsSignAndSendTxBatch(sendTxsPerPartition)
+		surplusTxs[partitionID] = config.Benchmark.OutstandingTxs - len(sentTxs[partitionID])
+		if surplusTxs[partitionID] < 0 {
+			surplusTxs[partitionID] = 0
+		}
+		log.Infof("Sending in fact: %v", len(sendTxsPerPartition))
 		log.Infof("TOOK: %v", timeTaken)
-		readyToSentTxs = readyToSentTxs[streamSent:]
-		log.Infof("[PARTITION %v] Sending: %v: Last sentTxs: dependency: %v, stream: %v/%v dependency graph: %v, txs executed: %v",
-			partitionID, outstandingTxs[partitionID], dependenciesSent, streamSent, len(readyToSentTxs), dependencyGraph.Length, len(signedBlock.TxExecutions))
-		logs.Log("moved-accounts-partition-"+signedBlock.SignedHeader.ChainID, "%d %d\n", movedAccounts, signedBlock.SignedHeader.Time.UnixNano())
-		logs.Flush()
-		movedAccounts = 0
+		// readyToSendTxs = readyToSendTxs[streamSent:]
+		log.Infof("[PARTITION %v] Sending: %v, dependency: %v/%v, stream: %v/%v surplus: %v, dependency graph: %v, txs executed: %v, timestamp: %v",
+			partitionID, outstandingTxs[partitionID], dependenciesSent, freedTxsMapsLen, streamSent, len(readyToSendTxs),
+			surplusTxs[partitionID], dependencyGraph.Length, len(signedBlock.TxExecutions), signedBlock.SignedHeader.Time.UnixNano())
+		logs.Log("movedTo-moved2-partition-"+signedBlock.SignedHeader.ChainID, "%d %d %d\n", moveToExecuted, move2Executed, signedBlock.SignedHeader.Time.UnixNano())
+		// logs.Flush()
+
+		if time.Since(experimentStart).Hours() >= 1.3 {
+			log.Warnf("Stopping experiment after %v hours", time.Since(experimentStart).Hours())
+			running = false
+		}
 	}
 }
 
@@ -301,16 +324,16 @@ func main() {
 	txsChan := logsReader.LogsLoader()
 	logsReader.Advance(2)
 	dependencyGraph := dependencies.NewDependencies()
-	var readyToSentTxs []*dependencies.TxResponse
+	var readyToSendTxs []*dependencies.TxResponse
 	var partitioning = partitioning.GetPartitioning(&config)
 	bar := pb.StartNew(5203957)
 	for tx := range txsChan {
 		readyTxs := dependencyGraph.AddDependencyWithMoves(tx, partitioning)
-		readyToSentTxs = append(readyToSentTxs, readyTxs...)
+		readyToSendTxs = append(readyToSendTxs, readyTxs...)
 		bar.Add(1)
 	}
 	bar.Finish()
-	log.Infof("Ready to send %v txs", len(readyToSentTxs))
+	log.Infof("Ready to send %v txs", len(readyToSendTxs))
 
 	for part, c := range config.Servers {
 		for _, shardClient := range c.Addresses {
@@ -331,5 +354,5 @@ func main() {
 		go utils.ListenBlockHeaders(c.ChainID, clients[c.ChainID][0], logs, blockChans[part])
 	}
 
-	clientEmitter(&config, logs, contractsMap, clients, logsReader, blockChans, readyToSentTxs, dependencyGraph)
+	clientEmitter(&config, logs, contractsMap, clients, logsReader, blockChans, readyToSendTxs, dependencyGraph)
 }

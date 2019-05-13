@@ -3,6 +3,7 @@ package utils
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/hyperledger/burrow/rpc/rpcquery"
 	// "github.com/tendermint/tendermint/types"
@@ -16,6 +17,7 @@ import (
 )
 
 func ListenBlockHeaders(partition string, client *def.Client, logs *Log, blockChan chan<- *rpcquery.SignedHeadersResult) {
+	logrus.Infof("Getting blocks for partition %v %v", partition, client.ChainAddress)
 	defer func() { logs.Close() }()
 	end := rpcevents.StreamBound()
 
@@ -29,7 +31,9 @@ func ListenBlockHeaders(partition string, client *def.Client, logs *Log, blockCh
 	commence := false
 	lastTime := int64(0)
 	for {
+		start := time.Now()
 		resp, err := signedHeaders.Recv()
+		tookToReceive := time.Since(start).Seconds()
 		checkFatalError(err)
 		if !commence && resp.SignedHeader.TotalTxs >= 2 {
 			commence = true
@@ -37,13 +41,46 @@ func ListenBlockHeaders(partition string, client *def.Client, logs *Log, blockCh
 		if commence {
 			blockChan <- resp
 			deltaTime := float64(resp.SignedHeader.Time.UnixNano()-lastTime) / float64(1e9)
-			logrus.Infof("---------GOT BLOCK %v from partition %v, totalTx: %v, Elapsed time: %v, root hash: %v, storage hash: %v",
+			logrus.Infof("---------GOT BLOCK %v from partition %v, totalTx: %v, Elapsed time: %v, root hash: %v, storage hash: %v, took: %v",
 				resp.SignedHeader.Height, partition, resp.SignedHeader.TotalTxs, deltaTime, resp.SignedHeader.Hash(),
-				resp.SignedHeader.AppHash)
+				resp.SignedHeader.AppHash, tookToReceive)
 			logs.Log("tput-partition-"+partition, "%d %d %v\n", resp.SignedHeader.TotalTxs, resp.SignedHeader.Time.UnixNano(), resp.SignedHeader.ProposerAddress)
 			lastTime = resp.SignedHeader.Time.UnixNano()
 			// logs.Flush()
 		}
+	}
+}
+
+func debugf(format string, args ...interface{}) {
+	logrus.Infof(format, args...)
+}
+
+func ListenBlockHeaders2(partition string, client *def.Client, logs *Log, blockChan chan<- *rpcquery.SignedHeadersResult) {
+	logrus.Infof("Getting blocks for partition %v %v", partition, client.ChainAddress)
+	defer func() { logs.Close() }()
+	end := rpcevents.StreamBound()
+
+	request := &rpcevents.BlocksRequest{
+		BlockRange: rpcevents.NewBlockRange(rpcevents.AbsoluteBound(1), end),
+	}
+	clientEvents, err := client.Query()
+	signedHeaders, err := clientEvents.ListSignedHeaders(context.Background(), request)
+	checkFatalError(err)
+
+	lastTime := int64(0)
+	for {
+		start := time.Now()
+		resp, err := signedHeaders.Recv()
+		tookToReceive := time.Since(start).Seconds()
+		checkFatalError(err)
+		blockChan <- resp
+		deltaTime := float64(resp.SignedHeader.Time.UnixNano()-lastTime) / float64(1e9)
+		debugf("---------GOT BLOCK %v from partition %v, totalTx: %v, Elapsed time: %v, root hash: %v, storage hash: %v, took: %v",
+			resp.SignedHeader.Height, partition, resp.SignedHeader.TotalTxs, deltaTime, resp.SignedHeader.Hash(),
+			resp.SignedHeader.AppHash, tookToReceive)
+		logs.Log("tput-partition-"+partition, "%d %d %v\n", resp.SignedHeader.TotalTxs, resp.SignedHeader.Time.UnixNano(), resp.SignedHeader.ProposerAddress)
+		lastTime = resp.SignedHeader.Time.UnixNano()
+		// logs.Flush()
 	}
 }
 

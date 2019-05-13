@@ -21,3 +21,7 @@ geth-client
 
 # Scripts
 *.sh
+
+chain_*/
+bin/
+burrow-client/logs-processing/cluster/

@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"io/ioutil"
 	"strconv"
+	"time"
 
 	"github.com/hyperledger/burrow/acm"
 	"github.com/hyperledger/burrow/binary"
@@ -35,6 +36,11 @@ type Config struct {
 		Clients        int `yaml:"clients"`
 		OutstandingTxs int `yaml:"outstandingTxs"`
 		Timeout        int `yaml:"timeout"`
+
+		CrossShardPercentage     float32       `yaml:"crossShardPercentage"`
+		CreateContractPercentage float32       `yaml:"createContractPercentage"`
+		MaximumAccounts          int           `yaml:"maximumAccounts"`
+		ExperimentTime           time.Duration `yaml:"experimentTime"`
 	}
 	Servers []struct {
 		ChainID   string `yaml:"chainID"`
