@@ -9,6 +9,7 @@ import (
 	"github.com/hyperledger/burrow/acm"
 	"github.com/hyperledger/burrow/binary"
 	"github.com/hyperledger/burrow/crypto"
+
 	"github.com/hyperledger/burrow/deploy/def"
 	"github.com/hyperledger/burrow/txs/payload"
 	"github.com/sirupsen/logrus"

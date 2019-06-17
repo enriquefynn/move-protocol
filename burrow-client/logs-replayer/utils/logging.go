@@ -80,28 +80,18 @@ func NewLatencyLog() *Latencies {
 		awaitingTx:  make(map[int64]int64),
 	}
 }
-func (lat *Latencies) Add(txsHash string, tx *dependencies.TxResponse, now int64) {
-	// now := time.Now().Nanosecond()
-	// for i, tx := range txs {
+func (lat *Latencies) Add(txHash string, tx *dependencies.TxResponse, now int64) {
 	if tx.MethodName == "moveTo" {
 		lat.awaitingTx[tx.OriginalIds[0]] = now
 	} else if tx.MethodName != "move2" {
-		lat.outgoingTxs[txsHash] = now
+		lat.outgoingTxs[txHash] = now
 	}
-	// }
 }
 
-func (lat *Latencies) Remove(txHash string, tx *dependencies.TxResponse, log *Log, now int64) {
-	var latency int64
+func (lat *Latencies) Remove(txHash string, tx *dependencies.TxResponse, log *Log, finalTime int64) {
+	initialTime := lat.outgoingTxs[txHash]
+	delete(lat.outgoingTxs, txHash)
 	var requiredMove bool
-	// for i, tx := range txs {
-	// if tx.MethodName == "moveTo" {
-	// lat.idLatency[tx.OriginalIds[0]] = now - lat.awaitingTx[tx.OriginalIds[0]]
-	// delete(lat.awaitingTx, tx.OriginalIds[0])
-	// } else if tx.MethodName == "move2" {
-	// lat.idLatency[tx.OriginalIds[0]] += (now - lat.awaitingTx[tx.OriginalIds[0]])
-	// delete(lat.awaitingTx, tx.OriginalIds[0])
-	// } else {
 	if tx.MethodName == "breed" {
 		delete(lat.outgoingTxs, txHash)
 		timeMoved1, id1Move := lat.awaitingTx[tx.OriginalIds[0]]
@@ -109,17 +99,14 @@ func (lat *Latencies) Remove(txHash string, tx *dependencies.TxResponse, log *Lo
 		if id1Move {
 			delete(lat.awaitingTx, tx.OriginalIds[0])
 			requiredMove = true
-			latency = (timeMoved1 - lat.outgoingTxs[txHash])
-		}
-		if id2Move {
+			initialTime = timeMoved1
+		} else if id2Move {
 			delete(lat.awaitingTx, tx.OriginalIds[1])
 			requiredMove = true
-			latency = (timeMoved2 - lat.outgoingTxs[txHash])
-		} else {
-			latency = (now - lat.outgoingTxs[txHash])
+			initialTime = timeMoved2
 		}
 	}
-	log.Log("latencies", "%v %d %d %v\n", tx.MethodName, now, latency, requiredMove)
-	// }
-	// }
+	if tx.MethodName != "moveTo" || tx.MethodName != "move2" {
+		log.Log("latencies", "%v %d %d %v\n", tx.MethodName, initialTime, finalTime, requiredMove)
+	}
 }

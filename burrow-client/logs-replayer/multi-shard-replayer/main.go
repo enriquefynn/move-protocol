@@ -9,12 +9,10 @@ import (
 	"sync"
 	"time"
 
-	"gopkg.in/cheggaaa/pb.v1"
-
-	"github.com/hyperledger/burrow/acm"
 	"github.com/hyperledger/burrow/dependencies"
-	"github.com/hyperledger/burrow/rpc/rpcquery"
+	"github.com/hyperledger/burrow/rpc/rpcevents"
 	"github.com/hyperledger/burrow/txs"
+	"gopkg.in/cheggaaa/pb.v1"
 	yaml "gopkg.in/yaml.v2"
 
 	"github.com/hyperledger/burrow/crypto"
@@ -58,7 +56,7 @@ func sendTxBatch(wg *sync.WaitGroup, clients []*def.Client, signedTxs []*txs.Env
 }
 
 func clientEmitter(config *config.Config, logs *utils.Log, contractsMap []*crypto.Address,
-	clients map[string][]*def.Client, logsReader *logsreader.LogsReader, blockChans []chan *rpcquery.SignedHeadersResult,
+	clients map[string][]*def.Client, logsReader *logsreader.LogsReader, blockChans []chan *rpcevents.SignedHeadersResult,
 	readyToSendTxs []*dependencies.TxResponse, dependencyGraph *dependencies.Dependencies) {
 	defer logs.Flush()
 
@@ -156,7 +154,7 @@ func clientEmitter(config *config.Config, logs *utils.Log, contractsMap []*crypt
 
 		// Select a block from channels, get channel id and block
 		partitionID, selectValue, _ := reflect.Select(cases)
-		signedBlock := selectValue.Interface().(*rpcquery.SignedHeadersResult)
+		signedBlock := selectValue.Interface().(*rpcevents.SignedHeadersResult)
 
 		for _, tx := range moved2TxsToAdd[partitionID] {
 			sendTxsPerPartition = append(sendTxsPerPartition, tx)
@@ -293,7 +291,7 @@ func clientEmitter(config *config.Config, logs *utils.Log, contractsMap []*crypt
 		logs.Log("movedTo-moved2-partition-"+signedBlock.SignedHeader.ChainID, "%d %d %d\n", moveToExecuted, move2Executed, signedBlock.SignedHeader.Time.UnixNano())
 		// logs.Flush()
 
-		if time.Since(experimentStart).Hours() >= 1.3 {
+		if time.Since(experimentStart).Seconds() > (config.Benchmark.ExperimentTime * time.Second).Seconds() {
 			log.Warnf("Stopping experiment after %v hours", time.Since(experimentStart).Hours())
 			running = false
 		}
@@ -311,12 +309,11 @@ func main() {
 	checkFatalError(err)
 
 	logsReader := logsreader.CreateLogsReader(config.Contracts.ReplayTransactionsPath, config.Contracts.CKABI, config.Contracts.KittyABI)
-	defaultAccount := acm.SigningAccounts([]*acm.PrivateAccount{acm.GeneratePrivateAccountFromSecret("0")})
 
 	// numberOfPartitions := config.Partitioning.NumberPartitions
 	// Clients in partitions
 	clients := make(map[string][]*def.Client)
-	var blockChans []chan *rpcquery.SignedHeadersResult
+	var blockChans []chan *rpcevents.SignedHeadersResult
 	// Mapping for partition to created contracts address
 	var contractsMap []*crypto.Address
 
@@ -337,7 +334,7 @@ func main() {
 
 	for part, c := range config.Servers {
 		for _, shardClient := range c.Addresses {
-			clients[c.ChainID] = append(clients[c.ChainID], def.NewClientWithLocalSigning(shardClient, time.Duration(config.Benchmark.Timeout)*time.Second, defaultAccount))
+			clients[c.ChainID] = append(clients[c.ChainID], def.NewClient(shardClient, "", false, time.Duration(config.Benchmark.Timeout)*time.Second))
 		}
 		// Deploy Genes contract
 		geneScienceAddress, err := utils.CreateContract(c.ChainID, &config, logsReader, clients[c.ChainID][0], config.Contracts.GenePath)
@@ -350,7 +347,7 @@ func main() {
 		// Set CK address to contractsMap[partition]
 		contractsMap = append(contractsMap, ckAddress)
 
-		blockChans = append(blockChans, make(chan *rpcquery.SignedHeadersResult))
+		blockChans = append(blockChans, make(chan *rpcevents.SignedHeadersResult))
 		go utils.ListenBlockHeaders(c.ChainID, clients[c.ChainID][0], logs, blockChans[part])
 	}
 

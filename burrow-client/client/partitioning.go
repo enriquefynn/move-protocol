@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/binary"
 	"sync"
 
 	"github.com/hyperledger/burrow/crypto"
@@ -21,6 +20,7 @@ type HashPartitioning struct {
 
 	numberContracts      int
 	crossShardRandChoice [][]int64
+	nextPartition        int64
 	sync.RWMutex
 }
 
@@ -52,13 +52,27 @@ func NewHashPartitioning(nPartitions int64, crossShardPercentage, createContract
 }
 
 func (hp *HashPartitioning) GetHash(k crypto.Address) int64 {
-	return int64(binary.BigEndian.Uint64(k[12:])%uint64(hp.nPartitions)) + 1
+	hp.Lock()
+	defer hp.Unlock()
+	hp.nextPartition = (hp.nextPartition + 1) % hp.nPartitions
+	return hp.nextPartition + 1
+	// return int64(binary.BigEndian.Uint64(k[12:])%uint64(hp.nPartitions)) + 1
+}
+
+func (hp *HashPartitioning) GetMostUnbalanced() int64 {
+	mostUnbalancedIdx := int64(1)
+	for p := range hp.elementsInEachPartition {
+		if hp.elementsInEachPartition[p] < hp.elementsInEachPartition[mostUnbalancedIdx] {
+			mostUnbalancedIdx = p
+		}
+	}
+	return mostUnbalancedIdx
 }
 
 func (hp *HashPartitioning) Add(k crypto.Address) int64 {
 	hp.Lock()
-	hp.numberContracts++
 	defer hp.Unlock()
+	hp.numberContracts++
 	// Partitions start at 1
 
 	partition := hp.GetHash(k)
@@ -107,8 +121,8 @@ func (hp *HashPartitioning) Move(k crypto.Address, m int64) {
 		debug("Moving %v to %v", k, m)
 		// Delete from objMap
 		delete(hp.partitionObjMap[originalPartition], k)
-		hp.partitionObjMap[m][k] = true
 	}
+	hp.partitionObjMap[m][k] = true
 }
 
 func (hp *HashPartitioning) WhereToMove(keys ...crypto.Address) int64 {

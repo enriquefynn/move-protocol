@@ -5,7 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/hyperledger/burrow/rpc/rpcquery"
+	"github.com/hyperledger/burrow/logging"
+
 	// "github.com/tendermint/tendermint/types"
 
 	"github.com/enriquefynn/sharding-runner/burrow-client/config"
@@ -16,7 +17,7 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-func ListenBlockHeaders(partition string, client *def.Client, logs *Log, blockChan chan<- *rpcquery.SignedHeadersResult) {
+func ListenBlockHeaders(partition string, client *def.Client, logs *Log, blockChan chan<- *rpcevents.SignedHeadersResult) {
 	logrus.Infof("Getting blocks for partition %v %v", partition, client.ChainAddress)
 	defer func() { logs.Close() }()
 	end := rpcevents.StreamBound()
@@ -24,8 +25,9 @@ func ListenBlockHeaders(partition string, client *def.Client, logs *Log, blockCh
 	request := &rpcevents.BlocksRequest{
 		BlockRange: rpcevents.NewBlockRange(rpcevents.AbsoluteBound(1), end),
 	}
-	clientEvents, err := client.Query()
-	signedHeaders, err := clientEvents.ListSignedHeaders(context.Background(), request)
+	logger := logging.NewNoopLogger()
+	clientEvents, err := client.Events(logger)
+	signedHeaders, err := clientEvents.StreamSignedHeaders(context.Background(), request)
 	checkFatalError(err)
 
 	commence := false
@@ -44,7 +46,7 @@ func ListenBlockHeaders(partition string, client *def.Client, logs *Log, blockCh
 			logrus.Infof("---------GOT BLOCK %v from partition %v, totalTx: %v, Elapsed time: %v, root hash: %v, storage hash: %v, took: %v",
 				resp.SignedHeader.Height, partition, resp.SignedHeader.TotalTxs, deltaTime, resp.SignedHeader.Hash(),
 				resp.SignedHeader.AppHash, tookToReceive)
-			logs.Log("tput-partition-"+partition, "%d %d %v\n", resp.SignedHeader.TotalTxs, resp.SignedHeader.Time.UnixNano(), resp.SignedHeader.ProposerAddress)
+			logs.Log("tput-partition-"+partition, "%d %d %d %v\n", resp.SignedHeader.TotalTxs, resp.SignedHeader.Time.UnixNano(), resp.SignedHeader.Height, resp.SignedHeader.ProposerAddress)
 			lastTime = resp.SignedHeader.Time.UnixNano()
 			// logs.Flush()
 		}
@@ -55,7 +57,7 @@ func debugf(format string, args ...interface{}) {
 	logrus.Infof(format, args...)
 }
 
-func ListenBlockHeaders2(partition string, client *def.Client, logs *Log, blockChan chan<- *rpcquery.SignedHeadersResult) {
+func ListenBlockHeaders2(partition string, client *def.Client, logs *Log, blockChan chan<- *rpcevents.SignedHeadersResult) {
 	logrus.Infof("Getting blocks for partition %v %v", partition, client.ChainAddress)
 	defer func() { logs.Close() }()
 	end := rpcevents.StreamBound()
@@ -63,14 +65,18 @@ func ListenBlockHeaders2(partition string, client *def.Client, logs *Log, blockC
 	request := &rpcevents.BlocksRequest{
 		BlockRange: rpcevents.NewBlockRange(rpcevents.AbsoluteBound(1), end),
 	}
-	clientEvents, err := client.Query()
-	signedHeaders, err := clientEvents.ListSignedHeaders(context.Background(), request)
+	logger := logging.NewNoopLogger()
+	clientEvents, err := client.Events(logger)
+	signedHeaders, err := clientEvents.StreamSignedHeaders(context.Background(), request)
 	checkFatalError(err)
 
 	lastTime := int64(0)
 	for {
 		start := time.Now()
 		resp, err := signedHeaders.Recv()
+		if err != nil {
+			logrus.Fatalf("ERROR: %v", err)
+		}
 		tookToReceive := time.Since(start).Seconds()
 		checkFatalError(err)
 		blockChan <- resp
@@ -78,7 +84,7 @@ func ListenBlockHeaders2(partition string, client *def.Client, logs *Log, blockC
 		debugf("---------GOT BLOCK %v from partition %v, totalTx: %v, Elapsed time: %v, root hash: %v, storage hash: %v, took: %v",
 			resp.SignedHeader.Height, partition, resp.SignedHeader.TotalTxs, deltaTime, resp.SignedHeader.Hash(),
 			resp.SignedHeader.AppHash, tookToReceive)
-		logs.Log("tput-partition-"+partition, "%d %d %v\n", resp.SignedHeader.TotalTxs, resp.SignedHeader.Time.UnixNano(), resp.SignedHeader.ProposerAddress)
+		logs.Log("tput-partition-"+partition, "%d %d %d %v\n", resp.SignedHeader.TotalTxs, resp.SignedHeader.Time.UnixNano(), resp.SignedHeader.Height, resp.SignedHeader.ProposerAddress)
 		lastTime = resp.SignedHeader.Time.UnixNano()
 		// logs.Flush()
 	}
@@ -89,8 +95,8 @@ func CreateContract(chainID string, config *config.Config, accounts *logsreader.
 	if err != nil {
 		return nil, err
 	}
-
-	receipt, err := client.BroadcastEnvelope(contractEnv)
+	logger := logging.NewNoopLogger()
+	receipt, err := client.BroadcastEnvelope(contractEnv, logger)
 	if err != nil {
 		return nil, err
 	}
