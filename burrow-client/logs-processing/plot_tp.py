@@ -129,13 +129,13 @@ def plot_aggregated(tput_paths, delta_time=5):
     start_time = max_min
 
     data_points_i = [0 for i in range(len(raw_tputs))]
-    previous_tput = [0 for i in range(len(raw_tputs))]
     running = True
     # Aggregate
+    first = True
+    all_txs_sum = 0
     while True:
         aggregated_data = []
         for tput_i, tput in enumerate(raw_tputs):
-            tput_data = raw_tputs[tput_i]
             prev_idx = data_points_i[tput_i]
             while True:
                 idx = data_points_i[tput_i]
@@ -155,35 +155,43 @@ def plot_aggregated(tput_paths, delta_time=5):
             if time_passed == 0:
                 running = False
                 break
+            all_txs_sum += tput[idx][1] - tput[prev_idx][1]
+            if first == True:
+                first_time = tput[idx][0]
+                first = False
+            last_time = tput[idx][0]
             aggregated_data.append(((tput[idx][0] + tput[prev_idx][0])/2., (tput[idx][1] - tput[prev_idx][1])/time_passed ))
         if running == False:
             break
         avg_time = np.average(list(map(lambda i : i[0], aggregated_data)))
         sum_txs = sum(list(map(lambda i : i[1], aggregated_data)))
-
         aggregated_tputs.append((avg_time, sum_txs))
         start_time += delta
 
+    print(last_time - first_time, all_txs_sum)
 
     # plot
     fig, ax = plt.subplots()
     avg_times = list(map(lambda i : (i[0] - max_min)/1e9, aggregated_tputs))
 
     ax.plot(avg_times, list(map(lambda i : i[1], aggregated_tputs)))
-    ax.set(xlabel='time (s)', ylabel='tx/s', title='tput {} partitions'.format(len(tput_paths)))
+    ax.set(xlabel='time (s)', ylabel='tx/s')
     ylim1, ylim2 = plt.ylim()
     plt.ylim((0, ylim2))
     # plt.show()
 
     # Plot stopped lines
+    labels = {'label': 'Limit reached'}
     for stop in stopped_at:
         if stop != None:
-            plt.axvline(x=(stop - max_min)/1e9, color='r', linestyle='--')
+            plt.axvline(x=(stop - max_min)/1e9, color='r', linestyle='--', **labels)
+        labels = {}
 
     return fig, ax
                 
 if __name__ == '__main__':
     fig, ax = plot_aggregated(sys.argv[1:], delta_time=60)
+    ax.legend()
     # plt.show()
     # fig, ax = multi_plot_absolute(sys.argv[1])
     # plt.show()

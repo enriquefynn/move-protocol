@@ -324,11 +324,15 @@ func main() {
 	var readyToSendTxs []*dependencies.TxResponse
 	var partitioning = partitioning.GetPartitioning(&config)
 	bar := pb.StartNew(5203957)
+
+	g := NewGraph()
 	for tx := range txsChan {
+		g.AddEdge(tx.OriginalIds)
 		readyTxs := dependencyGraph.AddDependencyWithMoves(tx, partitioning)
 		readyToSendTxs = append(readyToSendTxs, readyTxs...)
 		bar.Add(1)
 	}
+	g.MetisWrite()
 	bar.Finish()
 	log.Infof("Ready to send %v txs", len(readyToSendTxs))
 

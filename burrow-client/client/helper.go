@@ -178,11 +178,12 @@ func NewScalableCoinAPI(config *config.Config, logs *utils.Log) *ScalableCoin {
 		for {
 			logs.Log("balance", "%d ", time.Now().UnixNano())
 			sc.Lock()
+			elementsInEachPart := sc.partitioning.GetElementsInEachPart()
 			for i := int64(1); i <= config.Partitioning.NumberPartitions; i++ {
-				sc.balancePrediction[i-1] = partitioning.elementsInEachPartition[i]
-				logs.Log("balance", "%d ", partitioning.elementsInEachPartition[i])
+				sc.balancePrediction[i-1] = elementsInEachPart[i]
+				logs.Log("balance", "%d ", elementsInEachPart[i])
 			}
-			log.Infof("Balance: %v", partitioning.elementsInEachPartition)
+			log.Infof("Balance: %v", elementsInEachPart)
 			sc.Unlock()
 			logs.Log("balance", "\n")
 			time.Sleep(time.Minute)
@@ -322,8 +323,8 @@ func (sc *ScalableCoin) GetNext() int64 {
 
 func (sc *ScalableCoin) GetOp(token crypto.Address) *Operation {
 	// createToss := rand.Float32()
-	sc.partitioning.RLock()
 	sc.Lock()
+	sc.partitioning.RLock()
 	// sc.allowedCrossShardMutex.RLock()
 	defer sc.partitioning.RUnlock()
 	defer sc.Unlock()

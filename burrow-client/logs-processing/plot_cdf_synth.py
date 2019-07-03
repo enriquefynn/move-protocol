@@ -4,6 +4,8 @@ import sys
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
+    
+# plt.style.use('grayscale')
 
 def get_clients_latencies(latencies_path):
   clients = {}
@@ -38,30 +40,61 @@ def get_clients_latencies(latencies_path):
         clients[client_id].append({'method': method, 'latency': lat, 'failed': failed, 'cross_shard': cross_shard})
   return clients
 
+def get_cdf(latencies):
+  latencies = latencies[int(len(latencies)*0.1):int(len(latencies)*0.9)]
+  data_set = sorted(set(latencies))
+  if len(data_set) == 0:
+    return [], []
+  num_bins = np.append(data_set, data_set[-1] + 1)
+    # Use the histogram function to bin the data
+  counts, bin_edges = np.histogram(latencies, bins=num_bins)  # , normed=True)
+  counts = counts.astype(float) / len(latencies)
+  # Now find the cdf
+  cdf = np.cumsum(counts)
+
+  return cdf, bin_edges
+
 def plot_cdf(clients):
-    plt.style.use('grayscale')
+    fig, ax = plt.subplots()
+
     latencies = []
     for c in clients:
       latencies += map(lambda i : i['latency']/1e9, clients[c])
-    print(len(latencies))
 
-    latencies = latencies[int(len(latencies)*0.1):int(len(latencies)*0.9)]
-    data_set = sorted(set(latencies))
-    num_bins = np.append(data_set, data_set[-1] + 1)
-     # Use the histogram function to bin the data
-    counts, bin_edges = np.histogram(latencies, bins=num_bins)  # , normed=True)
-    counts = counts.astype(float) / len(latencies)
-    # Now find the cdf
-    cdf = np.cumsum(counts)
-    cdf_plot = {'value': bin_edges[0:-1], 'percentage': cdf}
-    fig, ax = plt.subplots()
-    # ax.set_xscale('log')
-
+    cdf, bin_edges = get_cdf(latencies)
     ax.plot(bin_edges[0:-1], cdf)
     #ax.ylim((0, 1))
 
     return fig, ax
     
+def plot_cdf_single_cross_shard(clients):
+    fig, ax = plt.subplots()
+    # fig, ax = plot_cdf(clients)
+
+    latencies = []
+    latencies_single_shard = []
+    latencies_multi_shard = []
+    for c in clients:
+      for l in clients[c]:
+        if l['cross_shard'] == False:
+          latencies_single_shard.append(l['latency']/1e9)
+        else:
+          latencies_multi_shard.append(l['latency']/1e9)
+        latencies += map(lambda i : i['latency']/1e9, clients[c])
+
+    latencies_single_shard = latencies_single_shard[int(len(latencies_single_shard)*0.1):int(len(latencies_single_shard)*0.9)]
+    cdf_single, bin_edges_single = get_cdf(latencies_single_shard)
+    ax.plot(bin_edges_single[0:-1], cdf_single, '--', label='single-shard')
+
+    latencies_multi_shard = latencies_multi_shard[int(len(latencies_multi_shard)*0.1):int(len(latencies_multi_shard)*0.9)]
+    cdf_multi, bin_edges_multi = get_cdf(latencies_multi_shard)
+    ax.plot(bin_edges_multi[0:-1], cdf_multi, label='cross-shard')
+
+
+    cdf, bin_edges = get_cdf(latencies)
+    ax.plot(bin_edges[0:-1], cdf, ':', label='aggregated')
+
+    return fig, ax
 
 
 if __name__ == '__main__':
@@ -75,5 +108,13 @@ if __name__ == '__main__':
     # fig, ax = plot_cdf(path)
     path = sys.argv[1].split('/')
     filename = path[-1].split('.')[0]
-    path = '/'.join(path[:-1]) + '/' + filename + '_cdf.pdf'
-    fig.savefig(path)
+    cdf_path = '/'.join(path[:-1]) + '/' + filename + '_cdf.pdf'
+    fig.savefig(cdf_path)
+
+    fig, ax = plot_cdf_single_cross_shard(clients)
+    separated_cdf_path = '/'.join(path[:-1]) + '/' + filename + '_cdf_separated.pdf'
+    ax.legend()
+    ax.set_xlabel('time (s)')
+    ax.set_ylabel('%')
+    fig.savefig(separated_cdf_path)
+  

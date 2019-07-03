@@ -42,6 +42,7 @@ const expectedBlockTime = time.Duration(6 * time.Second)
 type Client struct {
 	id           int
 	scalableCoin *ScalableCoin
+	clientConn   map[string]*def.Client
 
 	chainID string
 
@@ -58,10 +59,19 @@ type Client struct {
 	contractsPerClient int
 }
 
-func NewClient(accountID int, clients map[string][]*def.Client, scalableCoin *ScalableCoin, acc acm.AddressableSigner, logs *utils.Log, contractsPerClient int, signedHeaderCh chan MoveResponse) *Client {
+func NewClient(accountID int, clients map[string][]*def.Client, scalableCoin *ScalableCoin,
+	acc acm.AddressableSigner, logs *utils.Log, contractsPerClient int,
+	signedHeaderCh chan MoveResponse) *Client {
+	clientConns := make(map[string]*def.Client)
+
+	for p := range clients {
+		randClientN := accountID % len(clients[p])
+		clientConns[p] = clients[p][randClientN]
+	}
 	return &Client{
 		id:           accountID,
 		scalableCoin: scalableCoin,
+		clientConn:   clientConns,
 
 		clients:          clients,
 		acc:              acc,
@@ -74,10 +84,6 @@ func NewClient(accountID int, clients map[string][]*def.Client, scalableCoin *Sc
 		logs:               logs,
 		contractsPerClient: contractsPerClient,
 	}
-}
-
-func (c *Client) getRandomClient(partition string) *def.Client {
-	return c.clients[partition][rand.Intn(len(c.clients[partition]))]
 }
 
 func (c *Client) createContract(tx *payload.CallTx, staticContract bool) error {
@@ -97,7 +103,7 @@ func (c *Client) createContract(tx *payload.CallTx, staticContract bool) error {
 	if err != nil {
 		return err
 	}
-	ex, err := c.getRandomClient("1").BroadcastEnvelope(env, c.scalableCoin.logger)
+	ex, err := c.clientConn["1"].BroadcastEnvelope(env, c.scalableCoin.logger)
 	if err != nil {
 		return err
 	}
@@ -115,7 +121,7 @@ func (c *Client) createContract(tx *payload.CallTx, staticContract bool) error {
 				debug("Moving %v to partition %v", tx.Address, partition)
 				isMoving = true
 				moveTo := c.scalableCoin.createMoveTo(*addr, int(partition))
-				err := c.broadcastMove(moveTo, "1", strconv.Itoa(int(partition)))
+				err := c.broadcastMove(moveTo, "1", strconv.Itoa(int(partition)), staticContract)
 				if err != nil {
 					log.Warnf("ERROR doing move while making contract %v", err)
 					return err
@@ -154,7 +160,7 @@ func (c *Client) transfer(tx *payload.CallTx, moveToPartition int64) error {
 			return fmt.Errorf("Not owned token, should not happen")
 		}
 		moveTo := c.scalableCoin.createMoveTo(*tx.Address, int(moveToPartition))
-		err := c.broadcastMove(moveTo, fromPartitionStr, toPartitionStr)
+		err := c.broadcastMove(moveTo, fromPartitionStr, toPartitionStr, false)
 		if err != nil {
 			log.Warnf("ERROR DOING MOVE while transfering: %v %v", err, c.id)
 			return err
@@ -178,7 +184,7 @@ func (c *Client) transfer(tx *payload.CallTx, moveToPartition int64) error {
 		return err
 	}
 
-	ex, err := c.getRandomClient(toPartitionStr).BroadcastEnvelope(env, c.scalableCoin.logger)
+	ex, err := c.clientConn[toPartitionStr].BroadcastEnvelope(env, c.scalableCoin.logger)
 	if err != nil {
 		return err
 	}
@@ -196,7 +202,7 @@ type MoveResponse struct {
 	responseChan chan *payload.CallTx
 }
 
-func (c *Client) broadcastMove(tx *payload.CallTx, from string, to string) error {
+func (c *Client) broadcastMove(tx *payload.CallTx, from string, to string, static bool) error {
 	if from == to {
 		log.Fatalf("Cannot move to itself: %v, from: %v to: %v", tx.Address, from, to)
 	}
@@ -220,7 +226,7 @@ func (c *Client) broadcastMove(tx *payload.CallTx, from string, to string) error
 	if err != nil {
 		return err
 	}
-	cli := c.getRandomClient(from)
+	cli := c.clientConn[from]
 	ex, err := cli.BroadcastEnvelope(env, c.scalableCoin.logger)
 	debug("Executed moveTo %v from %v to %v", tx.Address, from, to)
 	c.logs.Log("latencies", "%v moveTo %v %v %v\n", c.id, from, ex.Height, err == nil)
@@ -284,7 +290,7 @@ move2:
 		if err != nil {
 			return err
 		}
-		cli = c.getRandomClient(to)
+		cli = c.clientConn[to]
 		ex, err = cli.BroadcastEnvelope(env, c.scalableCoin.logger)
 
 		if err != nil {
@@ -307,8 +313,10 @@ move2:
 		}
 
 		// log.Infof("MOVED %v from %v to %v", tx.Address, from, to)
-		c.scalableCoin.partitioning.Move(*tx.Address, int64(toInt))
-		c.tokenToPartition[*tx.Address] = int64(toInt)
+		if !static {
+			c.scalableCoin.partitioning.Move(*tx.Address, int64(toInt))
+			c.tokenToPartition[*tx.Address] = int64(toInt)
+		}
 		return nil
 	}
 }

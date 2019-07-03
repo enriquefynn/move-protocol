@@ -86,7 +86,8 @@ def multi_plot_absolute(tput_path):
     ax.set(xlabel='time (s)', ylabel='tx/s')
     ylim1, ylim2 = plt.ylim()
     plt.ylim((0, ylim2))
-    # plt.show()
+    plt.title('Sending to multiple clients (1000 clients)')
+    plt.show()
     return fig, ax
 
 

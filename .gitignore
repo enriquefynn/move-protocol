@@ -25,3 +25,4 @@ geth-client
 chain_*/
 bin/
 burrow-client/logs-processing/cluster/
+burrow-client/logs-processing/final_tests/

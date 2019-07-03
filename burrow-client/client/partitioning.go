@@ -69,6 +69,12 @@ func (hp *HashPartitioning) GetMostUnbalanced() int64 {
 	return mostUnbalancedIdx
 }
 
+func (hp *HashPartitioning) GetElementsInEachPart() map[int64]int64 {
+	hp.RLock()
+	defer hp.RUnlock()
+	return hp.elementsInEachPartition
+}
+
 func (hp *HashPartitioning) Add(k crypto.Address) int64 {
 	hp.Lock()
 	defer hp.Unlock()
