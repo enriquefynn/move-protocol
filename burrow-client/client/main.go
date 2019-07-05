@@ -212,9 +212,9 @@ func (c *Client) broadcastMove(tx *payload.CallTx, from string, to string, stati
 		// if !bytes.Equal(tx.Address.Bytes(), c.myTokens[0].Bytes()) {
 		// 	log.Fatalf("Moving not owned contract")
 		// }
-		if from != strconv.Itoa(int(c.tokenToPartition[*c.myTokens[0]])) {
-			log.Warnf("FROM DIVERGE IN CLIENT: %v %v!", from, c.tokenToPartition[*c.myTokens[0]])
-		}
+		// if from != strconv.Itoa(int(c.tokenToPartition[*c.myTokens[0]])) {
+		// 	log.Warnf("FROM DIVERGE IN CLIENT: %v %v!", from, c.tokenToPartition[*c.myTokens[0]])
+		// }
 	}
 	c.sequencePerPartition[from]++
 	tx.Input.Address = c.myAddress
@@ -385,11 +385,11 @@ func (c *Client) spawnClient(ctx context.Context, experimentCtr chan chan bool) 
 		}
 
 		tx = c.scalableCoin.createNewAccount()
-		err = c.createContract(tx, true)
+		err = c.createContract(tx, false)
 		for err != nil {
 			log.Warnf("[Client %v] ERROR creating initial static contract: %v", c.id, err)
 			tx = c.scalableCoin.createNewAccount()
-			err = c.createContract(tx, true)
+			err = c.createContract(tx, false)
 		}
 	}
 	experimentCtr <- beginExperiment
@@ -410,7 +410,7 @@ func (c *Client) spawnClient(ctx context.Context, experimentCtr chan chan bool) 
 			retry := 1
 			for err != nil {
 				awaitTime := time.Duration(rand.Intn(10)) * expectedBlockTime
-				log.Fatalf("[Client %v] Error transfering %v, retrying in %v s", c.id, err, awaitTime)
+				log.Warnf("[Client %v] Error transfering %v, retrying in %v s", c.id, err, awaitTime)
 				time.Sleep(awaitTime)
 				c.scalableCoin.GetRetryOp(randomToken, op)
 				err = c.transfer(op.Tx, op.moveToPartition)

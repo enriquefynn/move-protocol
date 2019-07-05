@@ -37,7 +37,7 @@ type ScalableCoin struct {
 	sync.RWMutex
 	nextPartition int64
 
-	// contractsInShard map[int64]map[crypto.Address]bool
+	contractsInShard map[int64]map[crypto.Address]bool
 	// allowedCrossShard map[int64]map[crypto.Address]bool
 
 	crossShardCount map[crypto.Address]int
@@ -55,16 +55,17 @@ func (sc *ScalableCoin) GetCrossShardRandom(fromToken crypto.Address, fromPartit
 
 	// delete(sc.contractsInShard[fromPartition], fromToken)
 
-	// for token := range sc.contractsInShard[toPartition] {
-	// 	sc.crossShardCount[token]++
-	// 	delete(sc.allowedCrossShard[toPartition], token)
-	// 	return token, nil
-	// }
-	// log.Fatalf("Should not happen")
-	// return crypto.ZeroAddress, nil
+	for token := range sc.contractsInShard[toPartition] {
+		// 	sc.crossShardCount[token]++
+		// 	delete(sc.allowedCrossShard[toPartition], token)
+		return token, nil
+	}
+	log.Fatalf("Should not happen")
+	return crypto.ZeroAddress, nil
 
-	randToken := rand.Intn(len(sc.staticToken[toPartition]))
-	return sc.staticToken[toPartition][randToken], nil
+	// randToken := rand.Intn(len(sc.staticToken[toPartition]))
+	// return sc.staticToken[toPartition][randToken], nil
+
 }
 
 func (sc *ScalableCoin) GetSameShardRandom(partition int64) crypto.Address {
@@ -73,23 +74,27 @@ func (sc *ScalableCoin) GetSameShardRandom(partition int64) crypto.Address {
 	// sc.Lock()
 	// defer sc.Unlock()
 
-	for _, token := range sc.staticToken[partition] {
-		// delete(sc.allowedCrossShard[partition], token)
+	// for _, token := range sc.staticToken[partition] {
+	// 	// delete(sc.allowedCrossShard[partition], token)
+	// 	return token
+	// }
+
+	for token := range sc.contractsInShard[partition] {
+		// 	// delete(sc.allowedCrossShard[partition], token)
 		return token
 	}
+
 	log.Fatalf("Should not happen")
 	return crypto.ZeroAddress
 }
 
 func (sc *ScalableCoin) FinishCrossShard(fromToken, toToken crypto.Address, fromPartition, toPartition int64) {
-	// sc.contractsInShardMutex.Lock()
-	// sc.allowedCrossShardMutex.Lock()
-	// defer sc.contractsInShardMutex.Unlock()
-	// defer sc.allowedCrossShardMutex.Unlock()
-	// sc.Lock()
-	// defer sc.Unlock()
+	sc.Lock()
+	defer sc.Unlock()
 
-	// sc.contractsInShard[fromPartition][fromToken] = true
+	sc.contractsInShard[fromPartition][fromToken] = true
+	delete(sc.contractsInShard[toPartition], fromToken)
+
 	// sc.crossShardCount[toToken]--
 	// if sc.crossShardCount[toToken] == 0 {
 	// 	sc.allowedCrossShard[toPartition][toToken] = true
@@ -97,10 +102,6 @@ func (sc *ScalableCoin) FinishCrossShard(fromToken, toToken crypto.Address, from
 }
 
 func (sc *ScalableCoin) FinishSameShard(toToken crypto.Address, toPartition int64) {
-	// sc.contractsInShardMutex.Lock()
-	// sc.allowedCrossShardMutex.Lock()
-	// defer sc.contractsInShardMutex.Unlock()
-	// defer sc.allowedCrossShardMutex.Unlock()
 	sc.Lock()
 	defer sc.Unlock()
 
@@ -111,22 +112,14 @@ func (sc *ScalableCoin) FinishSameShard(toToken crypto.Address, toPartition int6
 }
 
 func (sc *ScalableCoin) AddToken(token crypto.Address, partition int64) {
-	// sc.contractsInShardMutex.Lock()
-	// sc.allowedCrossShardMutex.Lock()
-	// defer sc.contractsInShardMutex.Unlock()
-	// defer sc.allowedCrossShardMutex.Unlock()
-	// sc.Lock()
-	// defer sc.Unlock()
+	sc.Lock()
+	defer sc.Unlock()
 
-	// sc.contractsInShard[partition][token] = true
+	sc.contractsInShard[partition][token] = true
 	// sc.allowedCrossShard[partition][token] = true
 }
 
 func (sc *ScalableCoin) AddStaticToken(token crypto.Address, partition int64) {
-	// sc.contractsInShardMutex.Lock()
-	// sc.allowedCrossShardMutex.Lock()
-	// defer sc.contractsInShardMutex.Unlock()
-	// defer sc.allowedCrossShardMutex.Unlock()
 	sc.Lock()
 	defer sc.Unlock()
 
@@ -163,16 +156,16 @@ func NewScalableCoinAPI(config *config.Config, logs *utils.Log) *ScalableCoin {
 		logs:              logs,
 		logger:            logging.NewNoopLogger(),
 		balancePrediction: balancePrediction,
-		// contractsInShard:  make(map[int64]map[crypto.Address]bool),
+		contractsInShard:  make(map[int64]map[crypto.Address]bool),
 		// allowedCrossShard: make(map[int64]map[crypto.Address]bool),
 		crossShardCount: make(map[crypto.Address]int),
 
 		staticToken: make(map[int64][]crypto.Address),
 	}
-	// for i := int64(1); i <= config.Partitioning.NumberPartitions; i++ {
-	// sc.contractsInShard[i] = make(map[crypto.Address]bool)
-	// sc.allowedCrossShard[i] = make(map[crypto.Address]bool)
-	// }
+	for i := int64(1); i <= config.Partitioning.NumberPartitions; i++ {
+		sc.contractsInShard[i] = make(map[crypto.Address]bool)
+		// sc.allowedCrossShard[i] = make(map[crypto.Address]bool)
+	}
 
 	go func() {
 		for {
@@ -322,13 +315,10 @@ func (sc *ScalableCoin) GetNext() int64 {
 }
 
 func (sc *ScalableCoin) GetOp(token crypto.Address) *Operation {
-	// createToss := rand.Float32()
 	sc.Lock()
 	sc.partitioning.RLock()
-	// sc.allowedCrossShardMutex.RLock()
 	defer sc.partitioning.RUnlock()
 	defer sc.Unlock()
-	// defer sc.allowedCrossShardMutex.RUnlock()
 
 	op := Operation{}
 
@@ -337,12 +327,7 @@ func (sc *ScalableCoin) GetOp(token crypto.Address) *Operation {
 	var randPartition int64
 	var toCrossShardToken crypto.Address
 	var crossShardToss float32
-	// log.Infof("shouldCrossShard: %v", sc.shouldCrossShard)
-	// if sc.shouldCrossShard > 0 {
-	// 	crossShardToss = 0.0
-	// } else {
 	crossShardToss = rand.Float32()
-	// }
 	if crossShardToss < sc.partitioning.crossShardPercentage {
 		// Not allowed to make crossshard
 		// if !sc.allowedCrossShard[fromPartition][token] {
