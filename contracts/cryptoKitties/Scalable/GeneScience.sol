@@ -18,10 +18,7 @@ contract GeneScience {
     uint256 public privilegedBirtherWindowSize = 5;
     KittyCoreInterface _kittyCore;
 
-    constructor (address _privilegedBirtherAddress, address _kittyCoreAddress) public {
-        require(_kittyCoreAddress != address(0));
-        _kittyCore = KittyCoreInterface(_kittyCoreAddress);
-        _privilegedBirther = _privilegedBirtherAddress;
+    constructor () public {
     }
 
     /// @dev set the privileged birther address
@@ -121,9 +118,9 @@ contract GeneScience {
         if (_privilegedBirther == address(0) || tx.origin == _privilegedBirther) {
             // Allow immediate births if there is no privileged birther, or if the originator
             // of the transaction is the privileged birther
-            require(block.number > _targetBlock);
+            // require(block.number > _targetBlock);
         } else {
-            require(block.number > _targetBlock + privilegedBirtherWindowSize);
+            // require(block.number > _targetBlock + privilegedBirtherWindowSize);
         }
 
 

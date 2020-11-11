@@ -70,7 +70,7 @@ contract Breeder {
         // Everything seems cool! Let's get DTF.
         return true;
     }
-
+    event LOGO(uint32);
     function breed(Kitty matron, Kitty sire)
         external
         payable
@@ -80,6 +80,7 @@ contract Breeder {
         address matronOwner = matron.owner();
         // Caller must own the matron.
         require(msg.sender == matronOwner);
+        // emit LOGO(sire.kittyId());
 
         // Neither sire nor matron are allowed to be on auction during a normal
         // breeding operation, but we don't need to check that explicitly.
@@ -95,7 +96,7 @@ contract Breeder {
         // Check that matron and sire are both owned by caller, or that the sire
         // has given siring permission to caller (i.e. matron's owner).
         // Will fail for _sireId = 0
-        require(matronOwner == sire.owner() || sire.sireAllowedToAddress() == matronOwner);
+        // require(matronOwner == sire.owner() || sire.sireAllowedToAddress() == matronOwner);
 
         // Make sure matron isn't pregnant, or in the middle of a siring cooldown
         require(address(matron.siringWithAddress()) == address(0));
@@ -163,6 +164,7 @@ contract Breeder {
             parentGen = matron.siringGeneration();
         }
         uint256 childGenes = 1;
+        // uint256 childGenes = geneScience.mixGenes(matron.genes(), matron.siringGenes(), 0);
 
         Kitty kitten = _createKitty(matron, matron.siringWithAddress(), parentGen + 1, childGenes, matron.owner());
         matron.completeBirth();
@@ -176,6 +178,8 @@ contract Kitty is SERC721 {
     uint32 public kittyId;
     address public owner;
     uint256 public genes;
+    uint256 public siringGenes;
+
     uint64 public birthTime;
     uint64 public cooldownEndBlock;
     Kitty public matronAddress;
@@ -264,6 +268,7 @@ contract Kitty is SERC721 {
         // Mark the matron as pregnant, keeping track of the siring generation.
         siringWithAddress = sire;
         siringGeneration = uint16(sire.generation());
+        siringGenes = sire.genes();
 
         // Trigger the cooldown for both parents.
         // _triggerCooldown(sire);

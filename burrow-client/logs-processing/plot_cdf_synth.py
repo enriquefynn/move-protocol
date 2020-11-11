@@ -34,10 +34,11 @@ def get_clients_latencies(latencies_path):
       if client_id not in clients:
         clients[client_id] = [] 
       if len(clients[client_id]) >= 1 and clients[client_id][-1]['failed'] == True:
+        clients[client_id][-1]['retry'] += 1
         clients[client_id][-1]['latency'] += lat
         clients[client_id][-1]['failed'] = failed
       else:
-        clients[client_id].append({'method': method, 'latency': lat, 'failed': failed, 'cross_shard': cross_shard})
+        clients[client_id].append({'method': method, 'latency': lat, 'failed': failed, 'cross_shard': cross_shard, 'retry': 0})
   return clients
 
 def get_cdf(latencies):

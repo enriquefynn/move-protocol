@@ -1,4 +1,4 @@
-#!/Users/fynn/.virtualenvs/ethereum/bin/python
+#!/usr/bin/env python
 
 import sys
 import matplotlib

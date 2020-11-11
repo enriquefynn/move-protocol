@@ -26,14 +26,32 @@
       "name": "validator 1"
     },
     {
-      "address":"FFE2D682466C4DB35C85348FEC72F6F249682C95",
+      "address":"E9EB3197BEC4CBB6AC7B327E65ECF73053E0DBF0",
       "pub_key": {
         "type":"tendermint/PubKeyEd25519",
-        "value":"PyGTq2DoKWRe60QENyTa6KJ5UC8C3Dsk+lrgXvh1nRg="
+        "value":"XXMdXmw5zrlhSz9tgHlkop+NEhYmqLo7bEDqzytr85M="
       },
       "power": "10",
       "name": "validator 2"
+    },
+    {
+      "address":"084A785C6E4C649306339D7C9C24DB324CC92A01",
+      "pub_key": {
+        "type":"tendermint/PubKeyEd25519",
+        "value":"CjG+PqIcmeD9vpVzi7STrXhtdSny8T1K59qnDepPLRw="
+      },
+      "power": "10",
+      "name": "validator 3"
+    },
+    {
+      "address":"9477FE29745DC49809CC2ADD49201DDD0634F2CD",
+      "pub_key": {
+        "type":"tendermint/PubKeyEd25519",
+        "value":"PZqwo1vKl6ndJRy5G6CCShEbhlwuffLOuDk7N2KhQ04="
+      },
+      "power": "10",
+      "name": "validator 4"
     }
-     ],
+  ],
   "app_hash": ""
 }

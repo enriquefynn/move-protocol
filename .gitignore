@@ -17,7 +17,6 @@ data/
 multi-shard-replayer
 single-shard-replayer
 generate
-geth-client
 
 # Scripts
 *.sh

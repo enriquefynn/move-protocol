@@ -135,7 +135,7 @@ func NewScalableCoinAPI(config *config.Config, logs *utils.Log) *ScalableCoin {
 	contractABI, err := abi.JSON(contractABIJson)
 	fatalError(err)
 
-	accountABIJson, err := os.Open(config.Contracts.KittyABI)
+	Json, err :=accountABI os.Open(config.Contracts.KittyABI)
 	fatalError(err)
 	accountABI, err := abi.JSON(accountABIJson)
 	fatalError(err)
