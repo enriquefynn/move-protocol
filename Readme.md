@@ -25,3 +25,5 @@ s1 keeps the headers (important to avoid replay attacks)
 
 Ethereum client:
 https://github.com/enriquefynn/go-ethereum/tree/sharding
+Burrow client:
+https://github.com/enriquefynn/burrow
